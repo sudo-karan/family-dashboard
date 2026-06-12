@@ -10,6 +10,8 @@ added.
   what's maturing in the next 120 days (or overdue), breakdowns by person and
   by account.
 - **All FDs** — filter, sort, search, edit, delete, export CSV.
+- **Accounts** — add, edit and (when empty) delete accounts from the app;
+  renaming an account automatically updates every FD under it.
 - **Add/edit form** — enter any two of *start / end / tenure* and any two of
   *rate / principal / maturity*; the third fills in automatically, and every
   computed value stays manually overridable (banks round differently — the
@@ -30,7 +32,8 @@ browser storage of any kind — state lives in memory and in the sheet.
 
 **The backend is a Google Apps Script web app** (`Code.gs`) bound to the
 spreadsheet. It exposes one `doPost` endpoint accepting
-`{action: list | create | update | delete, password, fd, id, newAccount}` and
+`{action: list | create | update | delete | accountCreate | accountUpdate |
+accountDelete, password, …}` and
 always replies with the full fresh state `{ok, fds, accounts}`, so the client
 just replaces what it has — no merging, no cache to go stale. The shared
 family password is stored as a **script property**, never in code, and is
@@ -68,9 +71,11 @@ requests that Apps Script can answer without a preflight.
   figures; per-FD you can pick monthly / half-yearly / annual / simple, or
   switch the FD to **periodic payout**, in which case maturity = principal
   and the rate is informational.
-- `Status` (Active/Inactive) and `Show In Dashboard` are independent flags:
-  dashboard totals sum **everything marked Show In Dashboard, regardless of
-  status**.
+- Dashboard totals count **Active FDs marked Show In Dashboard**. Inactive
+  FDs never count — marking an FD Inactive automatically takes it off the
+  dashboard (the form disables the checkbox). `Show In Dashboard` exists so
+  an *Active* FD can still be kept out of the totals (e.g. something tracked
+  separately).
 - FD account numbers are **opaque strings** end to end — `50301262368467`,
   `000140451094222`, `NA`, `nsc 20159108247` all survive verbatim (the
   columns are plain-text formatted; the backend never parses them as
