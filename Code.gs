@@ -107,6 +107,10 @@ function doPost(e) {
       return jsonOut({ ok: false, error: 'unknown action: ' + action });
     }
 
+    // Commit buffered sheet writes before reading the state back — without
+    // this, the read in the same request can still see pre-change data
+    // (classic Apps Script behaviour, most visible after deleteRow).
+    SpreadsheetApp.flush();
     return jsonOut({ ok: true, fds: readFds(), accounts: readAccounts() });
   } catch (err) {
     return jsonOut({ ok: false, error: String(err && err.message ? err.message : err) });

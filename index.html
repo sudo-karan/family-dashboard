@@ -168,8 +168,9 @@
     border-bottom:0; font-weight:700; font-size:13.5px; }
   .cell-main{ font-weight:600; white-space:nowrap; }
   .cell-sub{ font-size:11.5px; color:var(--muted); white-space:nowrap; }
-  .fdno{ display:inline-block; max-width:11ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-    font-variant-numeric:tabular-nums; vertical-align:bottom; }
+  /* full FD numbers, never truncated — the table scrolls sideways instead
+     (endings matter: many numbers share the same prefix) */
+  .fdno{ display:inline-block; white-space:nowrap; font-variant-numeric:tabular-nums; }
   .remarks-cell{ max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
   .date-cell{ white-space:nowrap; font-variant-numeric:tabular-nums; }
   .date-red{ color:var(--red); font-weight:650; }
@@ -228,6 +229,15 @@
   .spin-icon{ display:inline-block; }
   .spin-icon.spinning{ animation:fd-spin .9s linear infinite; }
   @keyframes fd-spin{ to{ transform:rotate(360deg); } }
+
+  /* ---------- confirmation dialog (sits above the form modals) ---------- */
+  .overlay.confirm-overlay{ z-index:70; align-items:center; }
+  .confirm-modal{ max-width:430px; }
+  .confirm-summary{ background:var(--surface-2); border-radius:9px; padding:10px 14px; margin:6px 0 4px; }
+  .confirm-summary > div{ margin:2px 0; overflow-wrap:anywhere; }
+  .btn.danger-solid{ background:var(--red); border-color:var(--red); color:#fff; }
+  .btn.danger-solid:hover{ filter:brightness(.92); }
+  html[data-theme="dark"] .btn.danger-solid{ color:#2D1210; }
 
   @media (max-width: 700px){
     .app{ padding:12px 12px 56px; }
@@ -716,6 +726,41 @@ function tenureCellOf(fd){
   return { label: '—', days: null };
 }
 
+/* Everything searchable about an FD, in every spelling someone might type:
+ * amounts as raw digits, with Indian commas, and in words; dates as stored
+ * and as displayed. Fields are joined with '|' so a space-insensitive query
+ * can't accidentally match across two fields. */
+function searchHay(f){
+  const parts = [
+    f.account, f.person, f.bank, String(f.accountNumber || ''), f.remarks || '',
+    f.status, f.interestOnMaturity ? 'on maturity' : 'periodic payout', f.compounding,
+    f.startDate || '', M.fmtDate(f.startDate), f.endDate || '', M.fmtDate(f.endDate),
+    f.rate ? f.rate + '% ' + f.rate : '',
+    tenureCellOf(f).label, f.tenureDays ? f.tenureDays + ' days' : '',
+    '#' + f.id
+  ];
+  [f.principal, f.maturity, interestOf(f)].forEach(function(v){
+    if (v === null || v === undefined || v === '' || v === 0) return;
+    const r = M.round2(Number(v));
+    parts.push(String(r));            /* 200000 */
+    parts.push(M.fmtINR(r));          /* ₹2,00,000 */
+    const w = M.fmtINRWords(r);
+    if (w) parts.push(w);             /* 2 lakh */
+  });
+  return parts.join('|').toLowerCase();
+}
+
+/* Match a query against a haystack, ignoring ₹, commas and spaces — so
+ * "200000", "2,00,000", "₹2,00,000" and "2 lakh" all find the same FD. */
+function searchMatch(hay, q){
+  const needle = String(q || '').trim().toLowerCase();
+  if (!needle) return true;
+  if (hay.indexOf(needle) >= 0) return true;
+  const strip = function(s){ return s.replace(/[₹,\s]/g, ''); };
+  const n = strip(needle);
+  return n !== '' && strip(hay).indexOf(n) >= 0;
+}
+
 /* ============================== login ============================== */
 function Login({ onLogin, busy, error }){
   const [pw, setPw] = useState('');
@@ -957,18 +1002,20 @@ function AllFDs({ fds, accounts, onEdit, onDelete }){
     }
   }
 
+  const hays = useMemo(function(){
+    const map = {};
+    fds.forEach(function(f){ map[f.id] = searchHay(f); });
+    return map;
+  }, [fds]);
+
   const filtered = useMemo(function(){
-    const needle = q.trim().toLowerCase();
     let rows = fds.filter(function(f){
       if (person !== 'all' && f.person !== person) return false;
       if (account !== 'all' && f.account !== account) return false;
       if (status !== 'all' && f.status !== status) return false;
       if (dash === 'shown' && !isOnDashboard(f)) return false;
       if (dash === 'hidden' && isOnDashboard(f)) return false;
-      if (needle){
-        const hay = (String(f.accountNumber) + ' ' + f.bank + ' ' + f.remarks + ' ' + f.account).toLowerCase();
-        if (hay.indexOf(needle) < 0) return false;
-      }
+      if (!searchMatch(hays[f.id], q)) return false;
       return true;
     });
     const endKey = function(f){ const p = M.parseISO(f.endDate); return p ? Date.UTC(p.y, p.mo - 1, p.d) : null; };
@@ -990,7 +1037,7 @@ function AllFDs({ fds, accounts, onEdit, onDelete }){
       'rate-desc': function(a, b){ return (b.rate || 0) - (a.rate || 0); }
     }[sort];
     return rows.slice().sort(cmp);
-  }, [fds, person, account, status, dash, q, sort]);
+  }, [fds, hays, person, account, status, dash, q, sort]);
 
   const totP = filtered.reduce(function(s, f){ return s + (Number(f.principal) || 0); }, 0);
   const totM = filtered.reduce(function(s, f){ return s + (Number(f.maturity) || 0); }, 0);
@@ -1024,7 +1071,7 @@ function AllFDs({ fds, accounts, onEdit, onDelete }){
           <option value="shown">Shown</option>
           <option value="hidden">Hidden</option>
         </select>
-        <input type="search" placeholder="Search FD no. / bank / remarks" aria-label="Search"
+        <input type="search" placeholder="Search anything — name, FD no., amount, date…" aria-label="Search"
                value={q} onChange={function(e){ setQ(e.target.value); }} />
         <span className="spacer" />
         <select aria-label="Sort" value={sort} onChange={function(e){ setSort(e.target.value); }}>
@@ -1052,7 +1099,7 @@ function AllFDs({ fds, accounts, onEdit, onDelete }){
               return (
                 <tr key={f.id}>
                   <td><div className="cell-main">{f.account}</div><div className="cell-sub">{f.person}</div></td>
-                  <td><span className="fdno" title={String(f.accountNumber || '')}>{f.accountNumber || '—'}</span></td>
+                  <td><span className="fdno">{f.accountNumber || '—'}</span></td>
                   <td className="date-cell">{M.fmtDate(f.startDate)}</td>
                   <td className={'date-cell' + endCls(f)}>{M.fmtDate(f.endDate)}</td>
                   <td><div className="cell-main">{t.label}</div><div className="cell-sub num" style={{ textAlign:'left' }}>{t.days !== null ? t.days + ' days' : ''}</div></td>
@@ -1152,7 +1199,8 @@ function AccountForm({ initial, accounts, fdCount, busy, onCancel, onSave }){
   const [err, setErr] = useState('');
 
   useEffect(function(){
-    function onKey(e){ if (e.key === 'Escape') onCancel(); }
+    /* ignore ESC while the confirmation dialog is on top — it closes itself */
+    function onKey(e){ if (e.key === 'Escape' && !document.querySelector('.confirm-overlay')) onCancel(); }
     document.addEventListener('keydown', onKey);
     return function(){ document.removeEventListener('keydown', onKey); };
   }, [onCancel]);
@@ -1242,7 +1290,8 @@ function FdForm({ initial, accounts, busy, onCancel, onSave }){
   const f = st.f, pins = st.pins;
 
   useEffect(function(){
-    function onKey(e){ if (e.key === 'Escape') onCancel(); }
+    /* ignore ESC while the confirmation dialog is on top — it closes itself */
+    function onKey(e){ if (e.key === 'Escape' && !document.querySelector('.confirm-overlay')) onCancel(); }
     document.addEventListener('keydown', onKey);
     document.body.style.overflow = 'hidden';
     return function(){
@@ -1532,6 +1581,38 @@ function FdForm({ initial, accounts, busy, onCancel, onSave }){
   );
 }
 
+/* ============================== confirmation dialog ============================== */
+/* One reusable yes/no step for add / edit / delete. Cancel is the focused,
+ * safe default, so a stray Enter or mis-tap never destroys anything. */
+function ConfirmDialog({ title, lines, confirmLabel, danger, busy, onConfirm, onCancel }){
+  useEffect(function(){
+    function onKey(e){ if (e.key === 'Escape') onCancel(); }
+    document.addEventListener('keydown', onKey);
+    return function(){ document.removeEventListener('keydown', onKey); };
+  }, [onCancel]);
+  return (
+    <div className="overlay confirm-overlay" onMouseDown={function(e){ if (e.target === e.currentTarget) onCancel(); }}>
+      <div className="modal confirm-modal" role="alertdialog" aria-modal="true" aria-label={title}>
+        <div className="modal-head"><h2>{title}</h2></div>
+        <div className="modal-body">
+          <div className="confirm-summary">
+            {lines.filter(Boolean).map(function(l, i){
+              return <div key={i} className={i === 0 ? '' : 'muted small'} style={i === 0 ? { fontWeight:650 } : undefined}>{l}</div>;
+            })}
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button type="button" className="btn" autoFocus onClick={onCancel}>Cancel</button>
+          <button type="button" className={'btn ' + (danger ? 'danger-solid' : 'primary')}
+                  onClick={onConfirm} disabled={busy}>
+            {busy ? 'Please wait…' : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ============================== app shell ============================== */
 function App(){
   const [auth, setAuth] = useState(null);
@@ -1539,6 +1620,7 @@ function App(){
   const [tab, setTab] = useState('dashboard');
   const [editing, setEditing] = useState(null);      /* null | 'new' | fd */
   const [accEditing, setAccEditing] = useState(null); /* null | 'new' | account */
+  const [confirm, setConfirm] = useState(null);      /* {title, lines, confirmLabel, danger, run} */
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [loginErr, setLoginErr] = useState('');
@@ -1639,29 +1721,83 @@ function App(){
     }
   }
 
-  async function handleSave(fd, newAccount){
-    const ok = await mutate({ action: fd.id ? 'update' : 'create', fd: fd, newAccount: newAccount });
-    if (ok) setEditing(null);
+  /* Every add / edit / delete passes through one styled yes/no dialog. */
+  async function runConfirm(){
+    const ok = await confirm.run();
+    if (ok) setConfirm(null);
   }
 
-  async function handleAccountSave(account, originalName){
-    const ok = await mutate(originalName
-      ? { action:'accountUpdate', account: account, originalName: originalName }
-      : { action:'accountCreate', account: account });
-    if (ok) setAccEditing(null);
+  function fdSummary(fd){
+    return [
+      fd.account + (fd.accountNumber ? ' · ' + fd.accountNumber : ''),
+      M.fmtINR(fd.principal === '' ? '' : fd.principal) + ' → ' + M.fmtINR(fd.maturity === '' ? '' : fd.maturity) +
+        (fd.rate ? ' at ' + M.fmtRate(fd.rate) : ''),
+      (fd.startDate || fd.endDate) ? (M.fmtDate(fd.startDate) + ' to ' + M.fmtDate(fd.endDate)) : ''
+    ];
+  }
+
+  function handleSave(fd, newAccount){
+    setConfirm({
+      title: fd.id ? 'Save changes to FD #' + fd.id + '?' : 'Add this FD?',
+      lines: fdSummary(fd).concat(newAccount ? ['Also adds new account “' + newAccount.name + '”.'] : []),
+      confirmLabel: fd.id ? 'Yes, save changes' : 'Yes, add FD',
+      danger: false,
+      run: async function(){
+        const ok = await mutate({ action: fd.id ? 'update' : 'create', fd: fd, newAccount: newAccount });
+        if (ok) setEditing(null);
+        return ok;
+      }
+    });
+  }
+
+  function handleAccountSave(account, originalName){
+    const renamed = originalName && originalName !== account.name;
+    const cascade = renamed
+      ? data.fds.filter(function(f){ return f.account === originalName; }).length
+      : 0;
+    setConfirm({
+      title: originalName ? 'Save changes to this account?' : 'Add this account?',
+      lines: [
+        account.name,
+        [(account.person || '—'), (account.bank || '—')].join(' · '),
+        cascade > 0 ? 'Renaming also updates ' + cascade + ' FD' + (cascade === 1 ? '' : 's') + ' under “' + originalName + '”.' : ''
+      ],
+      confirmLabel: originalName ? 'Yes, save changes' : 'Yes, add account',
+      danger: false,
+      run: async function(){
+        const ok = await mutate(originalName
+          ? { action:'accountUpdate', account: account, originalName: originalName }
+          : { action:'accountCreate', account: account });
+        if (ok) setAccEditing(null);
+        return ok;
+      }
+    });
   }
 
   function handleAccountDelete(acc){
-    if (window.confirm('Delete account “' + acc.name + '”?' + (LIVE ? '\nThis removes the row from the Accounts tab of the sheet.' : ''))){
-      mutate({ action:'accountDelete', name: acc.name });
-    }
+    setConfirm({
+      title: 'Delete this account?',
+      lines: [
+        acc.name,
+        [(acc.person || '—'), (acc.bank || '—')].join(' · '),
+        LIVE ? 'This removes the row from the Accounts tab of the sheet.' : 'Demo: it comes back on refresh.'
+      ],
+      confirmLabel: 'Yes, delete account',
+      danger: true,
+      run: function(){ return mutate({ action:'accountDelete', name: acc.name }); }
+    });
   }
 
   function handleDelete(fd){
-    const label = 'Delete FD' + (fd.accountNumber ? ' ' + fd.accountNumber : '') + ' under ' + fd.account +
-      (fd.principal ? ' (' + M.fmtINR(fd.principal) + ')' : '') + '?' +
-      (LIVE ? '\nThis removes the row from the Google Sheet.' : '');
-    if (window.confirm(label)) mutate({ action:'delete', id: fd.id });
+    setConfirm({
+      title: 'Delete this FD?',
+      lines: fdSummary(fd).concat([
+        LIVE ? 'This removes the row from the Google Sheet.' : 'Demo: it comes back on refresh.'
+      ]),
+      confirmLabel: 'Yes, delete FD',
+      danger: true,
+      run: function(){ return mutate({ action:'delete', id: fd.id }); }
+    });
   }
 
   /* Background reload from the sheet; never blocks the UI, announces itself. */
@@ -1775,6 +1911,14 @@ function App(){
                 busy={busy}
                 onCancel={function(){ setAccEditing(null); }}
                 onSave={handleAccountSave} />
+      )}
+
+      {confirm !== null && (
+        <ConfirmDialog title={confirm.title} lines={confirm.lines}
+                confirmLabel={confirm.confirmLabel} danger={confirm.danger}
+                busy={busy}
+                onConfirm={runConfirm}
+                onCancel={function(){ setConfirm(null); }} />
       )}
 
       {toast && (
