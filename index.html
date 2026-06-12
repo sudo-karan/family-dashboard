@@ -207,7 +207,7 @@
   .check-row{ display:flex; align-items:center; gap:9px; font-size:14px; padding-top:4px; }
   .check-row input{ width:17px; height:17px; accent-color:var(--accent); }
 
-  .toast{ position:fixed; left:50%; bottom:22px; transform:translateX(-50%); z-index:90;
+  .toast{ position:fixed; left:50%; top:calc(14px + env(safe-area-inset-top, 0px)); transform:translateX(-50%); z-index:90;
     background:#1C2B28; color:#fff; border-radius:11px; padding:11px 16px; font-size:14px;
     box-shadow:var(--shadow); display:flex; gap:14px; align-items:center; max-width:90vw; }
   .toast.success{ background:#0E6E55; }
@@ -219,6 +219,11 @@
   /* words under amounts in table cells: allowed to wrap, kept right-aligned */
   .cell-words{ white-space:normal; max-width:170px; margin-left:auto; line-height:1.35; }
   .soon-words{ display:block; font-size:11px; color:var(--muted); white-space:normal; max-width:200px; }
+  /* constant-width top-bar buttons: progress shown by spinning the icon, not by changing the label */
+  .theme-btn{ min-width:106px; }
+  .spin-icon{ display:inline-block; }
+  .spin-icon.spinning{ animation:fd-spin .9s linear infinite; }
+  @keyframes fd-spin{ to{ transform:rotate(360deg); } }
 
   @media (max-width: 700px){
     .app{ padding:12px 12px 56px; }
@@ -1714,17 +1719,18 @@ function App(){
                   onClick={function(){ switchTab('accounts'); }}>Accounts</button>
         </nav>
         <div className="topbar-actions">
-          <button type="button" className="btn" onClick={toggleTheme}
-                  title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-                  aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
-            {theme === 'dark' ? '☀' : '☾'}
+          <button type="button" className="btn theme-btn" onClick={toggleTheme}
+                  title="Switch between light and dark">
+            {theme === 'dark' ? 'Light mode' : 'Dark mode'}
           </button>
           {LIVE && (
             <button type="button" className="btn" title="Reload from the Google Sheet"
-                    onClick={refresh} disabled={refreshing}>↻ {refreshing ? 'Refreshing…' : 'Refresh'}</button>
+                    onClick={refresh} disabled={refreshing} aria-busy={refreshing}>
+              <span className={'spin-icon' + (refreshing ? ' spinning' : '')} aria-hidden="true">↻</span> Refresh
+            </button>
           )}
           <button type="button" className="btn primary" onClick={function(){ setEditing('new'); }}>＋ Add FD</button>
-          <button type="button" className="btn ghost" onClick={logout} title="Forget the saved sign-in on this device">
+          <button type="button" className="btn" onClick={logout} title="Forget the saved sign-in on this device">
             Sign out
           </button>
         </div>
