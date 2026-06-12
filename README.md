@@ -17,8 +17,15 @@ added.
   computed value stays manually overridable (banks round differently — the
   sheet's number wins). One exception: a **periodic-payout** FD's maturity is
   locked to its principal and the field is disabled.
-- **Readable amounts** — big numbers carry their Indian-words equivalent
-  everywhere (₹82,50,000 ≈ 82.5 lakh) so a misplaced zero is obvious.
+- **Readable amounts** — every big number carries its exact Indian-words
+  equivalent (₹82,50,000.10 → "82 lakh 50 thousand and 10 paise") on the
+  dashboard, in the table, and in the form, so a misplaced zero is obvious.
+- **Installable (PWA)** — "Add to Home Screen" on Android/iPhone gives it an
+  app icon and a standalone, browser-chrome-free window.
+- **Remembered sign-in** — the password is kept in a cookie on the device
+  (parents sign in once); a **Sign out** button forgets it. Changing
+  `FAMILY_PASSWORD` in Apps Script signs every device out at once.
+- **Light & dark mode** — follows the device by default, with a toggle.
 - **Google Sheets is the database** — the family can keep editing the sheet
   directly; the app and the sheet never fight.
 
@@ -26,12 +33,14 @@ added.
 
 There are exactly three parts and no build step.
 
-**The frontend is a single `index.html`.** React, ReactDOM and Babel are
-loaded from cdnjs and the JSX is transpiled in the browser, so the identical
-file runs by double-clicking it locally and when hosted on GitHub Pages. With
+**The frontend is `index.html`** (plus a few PWA side-files: a manifest,
+icons, and a tiny network-first service worker). React, ReactDOM and Babel
+are loaded from cdnjs and the JSX is transpiled in the browser — no build
+step; the page also runs by double-clicking it locally. With
 `APPS_SCRIPT_URL` left empty it boots into a self-contained demo with sample
-data; with the URL set it talks to the backend. It deliberately uses no
-browser storage of any kind — state lives in memory and in the sheet.
+data; with the URL set it talks to the backend. The only things kept on the
+device are two cookies: the remembered sign-in (cleared by Sign out) and the
+theme choice — all data lives in memory and in the sheet.
 
 **The backend is a Google Apps Script web app** (`Code.gs`) bound to the
 spreadsheet. It exposes one `doPost` endpoint accepting
@@ -62,7 +71,8 @@ requests that Apps Script can answer without a preflight.
 
 | File | What it is |
 |---|---|
-| `index.html` | The entire frontend (single file, no build) |
+| `index.html` | The frontend (one page, no build step) |
+| `manifest.webmanifest`, `sw.js`, `icons/` | PWA bits: install metadata, network-first service worker, app icons |
 | `Code.gs` | Apps Script backend — paste into the sheet's script editor |
 | `SETUP.md` | One-time deployment guide (sheet → script → Pages) |
 | `migrate.py` | One-time converter: old workbook → `FDs.csv` + `Accounts.csv` |

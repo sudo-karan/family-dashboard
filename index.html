@@ -4,6 +4,14 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Family FD Tracker</title>
+<meta name="theme-color" content="#0E6E55" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/icon-180.png" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="FD Tracker" />
 <style>
   :root{
     --bg:#EAEEEC; --surface:#FFFFFF; --surface-2:#F4F7F5;
@@ -14,7 +22,20 @@
     --radius:14px;
     --shadow:0 1px 2px rgba(20,48,43,.05), 0 10px 30px rgba(20,48,43,.07);
     --font:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color-scheme:light;
   }
+  html[data-theme="dark"]{
+    --bg:#101715; --surface:#19211F; --surface-2:#202B28;
+    --ink:#E5ECE9; --muted:#94A49F; --line:#33413D; --line-2:#283431;
+    --accent:#3CAE8C; --accent-ink:#8FD9C3; --accent-soft:#173A31;
+    --amber:#DCA14D; --amber-soft:#3A2E15;
+    --red:#DC837D;  --red-soft:#3D2523;
+    --shadow:0 1px 2px rgba(0,0,0,.35), 0 10px 30px rgba(0,0,0,.30);
+    color-scheme:dark;
+  }
+  html[data-theme="dark"] .btn.primary{ color:#0A2B22; }
+  html[data-theme="dark"] .brand-mark, html[data-theme="dark"] .login-mark{ color:#0A2B22; }
+  html[data-theme="dark"] .pill.gray{ background:#2A3633; color:#9DACA7; }
   *{ box-sizing:border-box; }
   html,body{ margin:0; padding:0; }
   body{ background:var(--bg); color:var(--ink); font:15px/1.5 var(--font); -webkit-font-smoothing:antialiased; }
@@ -187,14 +208,17 @@
   .check-row input{ width:17px; height:17px; accent-color:var(--accent); }
 
   .toast{ position:fixed; left:50%; bottom:22px; transform:translateX(-50%); z-index:90;
-    background:var(--ink); color:#fff; border-radius:11px; padding:11px 16px; font-size:14px;
+    background:#1C2B28; color:#fff; border-radius:11px; padding:11px 16px; font-size:14px;
     box-shadow:var(--shadow); display:flex; gap:14px; align-items:center; max-width:90vw; }
-  .toast.success{ background:var(--accent); }
-  .toast.error{ background:var(--red); }
+  .toast.success{ background:#0E6E55; }
+  .toast.error{ background:#A93A36; }
   .toast button{ border:0; background:transparent; color:#fff; font-size:16px; padding:0; }
   .link-btn:disabled{ opacity:.45; cursor:default; text-decoration:none; }
-  .num-words{ margin-top:3px; text-align:right; font-variant-numeric:tabular-nums; }
+  .num-words{ margin-top:3px; text-align:right; }
   input:disabled{ background:var(--surface-2); color:var(--muted); cursor:not-allowed; }
+  /* words under amounts in table cells: allowed to wrap, kept right-aligned */
+  .cell-words{ white-space:normal; max-width:170px; margin-left:auto; line-height:1.35; }
+  .soon-words{ display:block; font-size:11px; color:var(--muted); white-space:normal; max-width:200px; }
 
   @media (max-width: 700px){
     .app{ padding:12px 12px 56px; }
@@ -329,19 +353,30 @@ const FDMath = (function(){
     if (r === '' || r === null || r === undefined || isNaN(Number(r))) return '—';
     return Number(r) + '%';
   }
-  /* Amount in Indian words: 10159956 -> "1.02 crore", 825000 -> "8.25 lakh",
-   * 55561 -> "55.56 thousand". Returns null under a thousand. */
+  /* Amount in exact Indian words:
+   *   8250000.10  -> "82 lakh 50 thousand and 10 paise"
+   *   11718371.58 -> "1 crore 17 lakh 18 thousand 371 and 58 paise"
+   * Returns null under a thousand (the number already reads fine). */
   function fmtINRWords(n){
     const v = Number(n);
     if (n === '' || n === null || n === undefined || isNaN(v)) return null;
     const a = Math.abs(v);
-    let num, unit;
-    if (a >= 1e7){ num = a / 1e7; unit = 'crore'; }
-    else if (a >= 1e5){ num = a / 1e5; unit = 'lakh'; }
-    else if (a >= 1e3){ num = a / 1e3; unit = 'thousand'; }
-    else return null;
-    const s = num.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
-    return (v < 0 ? '−' : '') + s + ' ' + unit;
+    if (a < 1000) return null;
+    const totalPaise = Math.round(a * 100);
+    const rupees = Math.floor(totalPaise / 100);
+    const paise = totalPaise % 100;
+    const crore = Math.floor(rupees / 1e7);
+    const lakh = Math.floor((rupees % 1e7) / 1e5);
+    const thousand = Math.floor((rupees % 1e5) / 1000);
+    const rest = rupees % 1000;
+    const parts = [];
+    if (crore) parts.push(crore.toLocaleString('en-IN') + ' crore');
+    if (lakh) parts.push(lakh + ' lakh');
+    if (thousand) parts.push(thousand + ' thousand');
+    if (rest) parts.push(String(rest));
+    let s = parts.join(' ');
+    if (paise) s += (s ? ' and ' : '') + paise + ' paise';
+    return (v < 0 ? '−' : '') + s;
   }
   function tenureLabel(t){
     if (!t) return '—';
@@ -565,6 +600,64 @@ function demoMutate(data, body){
   }
   return { fds:fds, accounts:accounts };
 }
+
+/* ===================================================================== *
+ *  FDPrefs — the only things remembered on the device, via two cookies:
+ *  the family password (so parents don't retype it; cleared by Sign out)
+ *  and the light/dark theme choice. Guarded so it is also safe to load
+ *  outside a browser (unit tests).
+ * ===================================================================== */
+const FDPrefs = (function(){
+  const AUTH = 'fd_auth', THEME = 'fd_theme';
+  const HALF_YEAR = 15552000; /* seconds */
+
+  function readCookie(name){
+    if (typeof document === 'undefined') return '';
+    const m = document.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'));
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  function writeCookie(name, value, maxAgeSeconds){
+    if (typeof document === 'undefined') return;
+    let c = name + '=' + encodeURIComponent(value) + '; max-age=' + maxAgeSeconds + '; samesite=lax';
+    if (typeof location !== 'undefined' && location.protocol === 'https:') c += '; secure';
+    document.cookie = c;
+  }
+
+  function getAuth(){ return readCookie(AUTH); }
+  function setAuth(pw){ writeCookie(AUTH, pw, HALF_YEAR); }
+  function clearAuth(){ writeCookie(AUTH, '', 0); }
+
+  function systemPrefersDark(){
+    try {
+      return typeof window !== 'undefined' && !!window.matchMedia &&
+        window.matchMedia('(prefers-color-scheme: dark)').matches;
+    } catch (e){ return false; }
+  }
+  function getTheme(){
+    const t = readCookie(THEME);
+    if (t === 'dark' || t === 'light') return t;
+    return systemPrefersDark() ? 'dark' : 'light';
+  }
+  function applyTheme(t){
+    if (typeof document === 'undefined' || !document.documentElement) return;
+    document.documentElement.setAttribute('data-theme', t);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', t === 'dark' ? '#19211F' : '#0E6E55');
+  }
+  function setTheme(t){ writeCookie(THEME, t, HALF_YEAR * 2); applyTheme(t); }
+
+  return { getAuth:getAuth, setAuth:setAuth, clearAuth:clearAuth,
+    getTheme:getTheme, setTheme:setTheme, applyTheme:applyTheme };
+})();
+
+/* apply the saved/system theme before React mounts, so there is no flash */
+FDPrefs.applyTheme(FDPrefs.getTheme());
+
+/* PWA: register the service worker (https only; harmless no-op from disk) */
+if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator &&
+    typeof location !== 'undefined' && location.protocol === 'https:'){
+  navigator.serviceWorker.register('./sw.js').catch(function(){ /* optional */ });
+}
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -635,6 +728,9 @@ function Login({ onLogin, busy, error }){
         <button type="submit" className="btn primary" disabled={busy}>
           {busy ? 'Checking…' : 'Open the ledger'}
         </button>
+        <p className="login-sub small" style={{ margin:'12px 0 0' }}>
+          Stays signed in on this device until you sign out.
+        </p>
       </form>
     </div>
   );
@@ -655,7 +751,7 @@ function StatCards({ fds, shown }){
   const sub = function(amount, extra){
     const w = M.fmtINRWords(amount);
     const parts = [];
-    if (w) parts.push('≈ ' + w);
+    if (w) parts.push(w);
     if (extra) parts.push(extra);
     return parts.join(' · ') || ' ';
   };
@@ -718,6 +814,7 @@ function MaturingSoon({ shown, onEdit }){
             </span>
             <span className="soon-amts num">
               <span className="soon-mat">{M.fmtINR(f.maturity)}</span>
+              {M.fmtINRWords(f.maturity) ? <span className="soon-words">{M.fmtINRWords(f.maturity)}</span> : null}
               <span className="soon-pr">on {M.fmtINR(f.principal)}</span>
             </span>
           </button>
@@ -747,8 +844,8 @@ function Breakdown({ title, rows }){
                     <div className="share-track"><div className="share-bar" style={{ width: (max > 0 ? (r.principal / max) * 100 : 0) + '%' }} /></div>
                   </td>
                   <td className="num">{r.count}</td>
-                  <td className="num">{M.fmtINR(r.principal)}{M.fmtINRWords(r.principal) ? <div className="cell-sub">≈ {M.fmtINRWords(r.principal)}</div> : null}</td>
-                  <td className="num">{M.fmtINR(r.maturity)}{M.fmtINRWords(r.maturity) ? <div className="cell-sub">≈ {M.fmtINRWords(r.maturity)}</div> : null}</td>
+                  <td className="num">{M.fmtINR(r.principal)}{M.fmtINRWords(r.principal) ? <div className="cell-sub cell-words">{M.fmtINRWords(r.principal)}</div> : null}</td>
+                  <td className="num">{M.fmtINR(r.maturity)}{M.fmtINRWords(r.maturity) ? <div className="cell-sub cell-words">{M.fmtINRWords(r.maturity)}</div> : null}</td>
                 </tr>
               );
             })}
@@ -949,9 +1046,9 @@ function AllFDs({ fds, accounts, onEdit, onDelete }){
                   <td className={'date-cell' + endCls(f)}>{M.fmtDate(f.endDate)}</td>
                   <td><div className="cell-main">{t.label}</div><div className="cell-sub num" style={{ textAlign:'left' }}>{t.days !== null ? t.days + ' days' : ''}</div></td>
                   <td className="num">{M.fmtRate(f.rate)}</td>
-                  <td className="num" title={M.fmtINRWords(f.principal) || ''}>{M.fmtINR(f.principal || '')}</td>
-                  <td className="num" title={M.fmtINRWords(f.maturity) || ''}>{M.fmtINR(f.maturity || '')}</td>
-                  <td className="num">{i === null ? '—' : M.fmtINR(M.round2(i))}</td>
+                  <td className="num">{M.fmtINR(f.principal || '')}{M.fmtINRWords(f.principal) ? <div className="cell-sub cell-words">{M.fmtINRWords(f.principal)}</div> : null}</td>
+                  <td className="num">{M.fmtINR(f.maturity || '')}{M.fmtINRWords(f.maturity) ? <div className="cell-sub cell-words">{M.fmtINRWords(f.maturity)}</div> : null}</td>
+                  <td className="num">{i === null ? '—' : M.fmtINR(M.round2(i))}{i !== null && M.fmtINRWords(i) ? <div className="cell-sub cell-words">{M.fmtINRWords(M.round2(i))}</div> : null}</td>
                   <td><span className="small muted">{f.interestOnMaturity ? 'On maturity' : 'Periodic'}</span></td>
                   <td><span className={'pill ' + (f.status === 'Active' ? 'green' : 'gray')}>{f.status}</span></td>
                   <td><span className={'pill ' + (isOnDashboard(f) ? 'green' : 'gray')}>{isOnDashboard(f) ? 'Shown' : 'Hidden'}</span></td>
@@ -968,9 +1065,9 @@ function AllFDs({ fds, accounts, onEdit, onDelete }){
           <tfoot>
             <tr>
               <td colSpan={6}>{filtered.length} of {fds.length} deposits</td>
-              <td className="num">{M.fmtINR(totP)}{M.fmtINRWords(totP) ? <div className="cell-sub">≈ {M.fmtINRWords(totP)}</div> : null}</td>
-              <td className="num">{M.fmtINR(totM)}{M.fmtINRWords(totM) ? <div className="cell-sub">≈ {M.fmtINRWords(totM)}</div> : null}</td>
-              <td className="num">{M.fmtINR(totM - totP)}{M.fmtINRWords(totM - totP) ? <div className="cell-sub">≈ {M.fmtINRWords(totM - totP)}</div> : null}</td>
+              <td className="num">{M.fmtINR(totP)}{M.fmtINRWords(totP) ? <div className="cell-sub cell-words">{M.fmtINRWords(totP)}</div> : null}</td>
+              <td className="num">{M.fmtINR(totM)}{M.fmtINRWords(totM) ? <div className="cell-sub cell-words">{M.fmtINRWords(totM)}</div> : null}</td>
+              <td className="num">{M.fmtINR(totM - totP)}{M.fmtINRWords(totM - totP) ? <div className="cell-sub cell-words">{M.fmtINRWords(totM - totP)}</div> : null}</td>
               <td colSpan={5}></td>
             </tr>
           </tfoot>
@@ -1016,7 +1113,7 @@ function AccountsView({ accounts, fds, onAdd, onEdit, onDelete }){
                   <td>{a.person || '—'}</td>
                   <td>{a.bank || '—'}</td>
                   <td className="num">{s.count}</td>
-                  <td className="num">{s.count ? M.fmtINR(s.principal) : '—'}</td>
+                  <td className="num">{s.count ? M.fmtINR(s.principal) : '—'}{s.count && M.fmtINRWords(s.principal) ? <div className="cell-sub cell-words">{M.fmtINRWords(s.principal)}</div> : null}</td>
                   <td className="row-actions" style={{ textAlign:'right' }}>
                     <button type="button" className="btn ghost small" onClick={function(){ onEdit(a); }}>Edit</button>
                     <button type="button" className="btn danger-ghost" aria-label={'Delete account ' + a.name}
@@ -1363,18 +1460,18 @@ function FdForm({ initial, accounts, busy, onCancel, onSave }){
               <Field id="f-principal" label="Principal (₹)" auto={isAuto('principal', f.principal)}>
                 <input id="f-principal" className="num-in" inputMode="decimal" value={f.principal} placeholder="50000"
                        onChange={function(e){ setField('principal', e.target.value); }} />
-                {M.fmtINRWords(f.principal) ? <div className="muted small num-words">≈ {M.fmtINRWords(f.principal)}</div> : null}
+                {M.fmtINRWords(f.principal) ? <div className="muted small num-words">{M.fmtINRWords(f.principal)}</div> : null}
               </Field>
               <Field id="f-maturity" label="Maturity (₹)" auto={isAuto('maturity', f.maturity)}>
                 <input id="f-maturity" className="num-in" inputMode="decimal" value={f.maturity}
                        disabled={!f.interestOnMaturity}
                        title={!f.interestOnMaturity ? 'Periodic payout: maturity always equals the principal' : ''}
                        onChange={function(e){ setField('maturity', e.target.value); }} />
-                {M.fmtINRWords(f.maturity) ? <div className="muted small num-words">≈ {M.fmtINRWords(f.maturity)}</div> : null}
+                {M.fmtINRWords(f.maturity) ? <div className="muted small num-words">{M.fmtINRWords(f.maturity)}</div> : null}
               </Field>
             </div>
             <div className="readout">
-              <span>Interest&nbsp;<b className="accent">{liveInterest === null ? '—' : M.fmtINR(M.round2(liveInterest))}</b>{liveInterest !== null && M.fmtINRWords(liveInterest) ? <span className="muted"> ≈ {M.fmtINRWords(liveInterest)}</span> : null}<span className="muted"> (maturity − principal)</span></span>
+              <span>Interest&nbsp;<b className="accent">{liveInterest === null ? '—' : M.fmtINR(M.round2(liveInterest))}</b>{liveInterest !== null && M.fmtINRWords(liveInterest) ? <span className="muted"> · {M.fmtINRWords(M.round2(liveInterest))}</span> : null}<span className="muted"> (maturity − principal)</span></span>
               {!f.interestOnMaturity ? <span className="muted">Periodic payout: maturity is locked to the principal; the rate is informational.</span> : null}
             </div>
             <div style={{ marginBottom: 11 }}>
@@ -1433,6 +1530,9 @@ function App(){
   const [refreshing, setRefreshing] = useState(false);
   const [loginErr, setLoginErr] = useState('');
   const [toast, setToast] = useState(null); /* {msg, kind:'success'|'error'} */
+  const [theme, setThemeState] = useState(function(){ return FDPrefs.getTheme(); });
+  /* true while trying the sign-in remembered on this device */
+  const [boot, setBoot] = useState(function(){ return !!FDPrefs.getAuth(); });
 
   useEffect(function(){
     if (!toast) return;
@@ -1440,13 +1540,48 @@ function App(){
     return function(){ clearTimeout(t); };
   }, [toast]);
 
+  /* Auto sign-in with the cookie saved on this device, once, on load. */
+  useEffect(function(){
+    const pw = FDPrefs.getAuth();
+    if (!pw){ setBoot(false); return; }
+    if (!LIVE){
+      setData(demoSeed());
+      setAuth({ password: pw });
+      setBoot(false);
+      return;
+    }
+    (async function(){
+      try {
+        const j = await postApi({ action:'list', password: pw });
+        setData({ fds: j.fds, accounts: j.accounts });
+        setAuth({ password: pw });
+      } catch (e) {
+        if (e.message === 'unauthorized'){
+          FDPrefs.clearAuth();
+          setLoginErr('The saved sign-in is no longer valid — enter the family password.');
+        } else {
+          setLoginErr('Could not sign in automatically: ' + e.message);
+        }
+      } finally {
+        setBoot(false);
+      }
+    })();
+  }, []);
+
   function notifyOk(msg){ setToast({ msg: msg, kind: 'success' }); }
   function notifyError(msg){ setToast({ msg: msg, kind: 'error' }); }
+
+  function toggleTheme(){
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setThemeState(next);
+    FDPrefs.setTheme(next);
+  }
 
   async function login(pw){
     setLoginErr('');
     if (!pw){ setLoginErr('Enter the family password.'); return; }
     if (!LIVE){
+      FDPrefs.setAuth(pw);
       setData(demoSeed());
       setAuth({ password: pw });
       return;
@@ -1454,6 +1589,7 @@ function App(){
     setBusy(true);
     try {
       const j = await postApi({ action:'list', password: pw });
+      FDPrefs.setAuth(pw); /* remember on this device until Sign out */
       setData({ fds: j.fds, accounts: j.accounts });
       setAuth({ password: pw });
     } catch (e) {
@@ -1461,6 +1597,15 @@ function App(){
     } finally {
       setBusy(false);
     }
+  }
+
+  function logout(){
+    FDPrefs.clearAuth();
+    setAuth(null);
+    setData(null);
+    setTab('dashboard');
+    setLoginErr('');
+    setToast(null);
   }
 
   async function mutate(body){
@@ -1527,6 +1672,18 @@ function App(){
     setTab(t);
   }
 
+  if (boot){
+    return (
+      <div className="login-wrap">
+        <div className="login-card">
+          <div className="login-mark" aria-hidden="true">₹</div>
+          <h1>Family FD Tracker</h1>
+          <p className="login-sub">Opening the ledger with your saved sign-in…</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!auth) return <Login onLogin={login} busy={busy} error={loginErr} />;
 
   const accountsByName = {};
@@ -1557,11 +1714,19 @@ function App(){
                   onClick={function(){ switchTab('accounts'); }}>Accounts</button>
         </nav>
         <div className="topbar-actions">
+          <button type="button" className="btn" onClick={toggleTheme}
+                  title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                  aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+            {theme === 'dark' ? '☀' : '☾'}
+          </button>
           {LIVE && (
             <button type="button" className="btn" title="Reload from the Google Sheet"
                     onClick={refresh} disabled={refreshing}>↻ {refreshing ? 'Refreshing…' : 'Refresh'}</button>
           )}
           <button type="button" className="btn primary" onClick={function(){ setEditing('new'); }}>＋ Add FD</button>
+          <button type="button" className="btn ghost" onClick={logout} title="Forget the saved sign-in on this device">
+            Sign out
+          </button>
         </div>
       </header>
 
