@@ -189,7 +189,12 @@
   .toast{ position:fixed; left:50%; bottom:22px; transform:translateX(-50%); z-index:90;
     background:var(--ink); color:#fff; border-radius:11px; padding:11px 16px; font-size:14px;
     box-shadow:var(--shadow); display:flex; gap:14px; align-items:center; max-width:90vw; }
+  .toast.success{ background:var(--accent); }
+  .toast.error{ background:var(--red); }
   .toast button{ border:0; background:transparent; color:#fff; font-size:16px; padding:0; }
+  .link-btn:disabled{ opacity:.45; cursor:default; text-decoration:none; }
+  .num-words{ margin-top:3px; text-align:right; font-variant-numeric:tabular-nums; }
+  input:disabled{ background:var(--surface-2); color:var(--muted); cursor:not-allowed; }
 
   @media (max-width: 700px){
     .app{ padding:12px 12px 56px; }
@@ -324,6 +329,20 @@ const FDMath = (function(){
     if (r === '' || r === null || r === undefined || isNaN(Number(r))) return '—';
     return Number(r) + '%';
   }
+  /* Amount in Indian words: 10159956 -> "1.02 crore", 825000 -> "8.25 lakh",
+   * 55561 -> "55.56 thousand". Returns null under a thousand. */
+  function fmtINRWords(n){
+    const v = Number(n);
+    if (n === '' || n === null || n === undefined || isNaN(v)) return null;
+    const a = Math.abs(v);
+    let num, unit;
+    if (a >= 1e7){ num = a / 1e7; unit = 'crore'; }
+    else if (a >= 1e5){ num = a / 1e5; unit = 'lakh'; }
+    else if (a >= 1e3){ num = a / 1e3; unit = 'thousand'; }
+    else return null;
+    const s = num.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+    return (v < 0 ? '−' : '') + s + ' ' + unit;
+  }
   function tenureLabel(t){
     if (!t) return '—';
     const parts = [];
@@ -372,7 +391,9 @@ const FDMath = (function(){
     const pins = {
       start: !!f.start, end: !!f.end,
       tenure: !t && fd.tenureDays > 0,
-      rate: f.rate !== '', principal: f.principal !== '', maturity: f.maturity !== ''
+      rate: f.rate !== '', principal: f.principal !== '',
+      /* periodic payout: maturity is locked to the principal, never pinned */
+      maturity: f.maturity !== '' && f.interestOnMaturity
     };
     return { f:f, pins:pins };
   }
@@ -443,7 +464,7 @@ const FDMath = (function(){
   return { parseISO:parseISO, toISO:toISO, todayISO:todayISO, daysInMonth:daysInMonth,
     diffDays:diffDays, diffYMD:diffYMD, addYMD:addYMD, subYMD:subYMD,
     maturityOf:maturityOf, rateOf:rateOf, principalOf:principalOf, round2:round2,
-    fmtINR:fmtINR, fmtDate:fmtDate, fmtRate:fmtRate, tenureLabel:tenureLabel,
+    fmtINR:fmtINR, fmtDate:fmtDate, fmtRate:fmtRate, fmtINRWords:fmtINRWords, tenureLabel:tenureLabel,
     emptyForm:emptyForm, formFromFd:formFromFd, solveForm:solveForm,
     tenureEntered:tenureEntered, tenureOf:tenureOf, formDays:formDays };
 })();
@@ -631,6 +652,13 @@ function StatCards({ fds, shown }){
   const accounts = {};
   shown.forEach(function(f){ accounts[f.account] = true; });
   const nAcc = Object.keys(accounts).length;
+  const sub = function(amount, extra){
+    const w = M.fmtINRWords(amount);
+    const parts = [];
+    if (w) parts.push('≈ ' + w);
+    if (extra) parts.push(extra);
+    return parts.join(' · ') || ' ';
+  };
   return (
     <div className="cards">
       <div className="card">
@@ -641,17 +669,17 @@ function StatCards({ fds, shown }){
       <div className="card">
         <div className="card-label">Total principal</div>
         <div className="card-value">{M.fmtINR(tp)}</div>
-        <div className="card-sub">across {nAcc} account{nAcc === 1 ? '' : 's'}</div>
+        <div className="card-sub">{sub(tp, 'across ' + nAcc + ' account' + (nAcc === 1 ? '' : 's'))}</div>
       </div>
       <div className="card">
         <div className="card-label">Total at maturity</div>
         <div className="card-value">{M.fmtINR(tm)}</div>
-        <div className="card-sub">{tp > 0 ? '+' + ((tm / tp - 1) * 100).toFixed(1) + '% over principal' : ' '}</div>
+        <div className="card-sub">{sub(tm, tp > 0 ? '+' + ((tm / tp - 1) * 100).toFixed(1) + '% over principal' : '')}</div>
       </div>
       <div className="card">
         <div className="card-label">Interest to earn</div>
         <div className="card-value accent">{M.fmtINR(tm - tp)}</div>
-        <div className="card-sub">maturity − principal</div>
+        <div className="card-sub">{sub(tm - tp, 'maturity − principal')}</div>
       </div>
     </div>
   );
@@ -719,8 +747,8 @@ function Breakdown({ title, rows }){
                     <div className="share-track"><div className="share-bar" style={{ width: (max > 0 ? (r.principal / max) * 100 : 0) + '%' }} /></div>
                   </td>
                   <td className="num">{r.count}</td>
-                  <td className="num">{M.fmtINR(r.principal)}</td>
-                  <td className="num">{M.fmtINR(r.maturity)}</td>
+                  <td className="num">{M.fmtINR(r.principal)}{M.fmtINRWords(r.principal) ? <div className="cell-sub">≈ {M.fmtINRWords(r.principal)}</div> : null}</td>
+                  <td className="num">{M.fmtINR(r.maturity)}{M.fmtINRWords(r.maturity) ? <div className="cell-sub">≈ {M.fmtINRWords(r.maturity)}</div> : null}</td>
                 </tr>
               );
             })}
@@ -921,8 +949,8 @@ function AllFDs({ fds, accounts, onEdit, onDelete }){
                   <td className={'date-cell' + endCls(f)}>{M.fmtDate(f.endDate)}</td>
                   <td><div className="cell-main">{t.label}</div><div className="cell-sub num" style={{ textAlign:'left' }}>{t.days !== null ? t.days + ' days' : ''}</div></td>
                   <td className="num">{M.fmtRate(f.rate)}</td>
-                  <td className="num">{M.fmtINR(f.principal || '')}</td>
-                  <td className="num">{M.fmtINR(f.maturity || '')}</td>
+                  <td className="num" title={M.fmtINRWords(f.principal) || ''}>{M.fmtINR(f.principal || '')}</td>
+                  <td className="num" title={M.fmtINRWords(f.maturity) || ''}>{M.fmtINR(f.maturity || '')}</td>
                   <td className="num">{i === null ? '—' : M.fmtINR(M.round2(i))}</td>
                   <td><span className="small muted">{f.interestOnMaturity ? 'On maturity' : 'Periodic'}</span></td>
                   <td><span className={'pill ' + (f.status === 'Active' ? 'green' : 'gray')}>{f.status}</span></td>
@@ -940,9 +968,9 @@ function AllFDs({ fds, accounts, onEdit, onDelete }){
           <tfoot>
             <tr>
               <td colSpan={6}>{filtered.length} of {fds.length} deposits</td>
-              <td className="num">{M.fmtINR(totP)}</td>
-              <td className="num">{M.fmtINR(totM)}</td>
-              <td className="num">{M.fmtINR(totM - totP)}</td>
+              <td className="num">{M.fmtINR(totP)}{M.fmtINRWords(totP) ? <div className="cell-sub">≈ {M.fmtINRWords(totP)}</div> : null}</td>
+              <td className="num">{M.fmtINR(totM)}{M.fmtINRWords(totM) ? <div className="cell-sub">≈ {M.fmtINRWords(totM)}</div> : null}</td>
+              <td className="num">{M.fmtINR(totM - totP)}{M.fmtINRWords(totM - totP) ? <div className="cell-sub">≈ {M.fmtINRWords(totM - totP)}</div> : null}</td>
               <td colSpan={5}></td>
             </tr>
           </tfoot>
@@ -1176,7 +1204,10 @@ function FdForm({ initial, accounts, busy, onCancel, onSave }){
       tenureDays: tDays === null ? '' : tDays,
       rate: f.rate === '' ? '' : parseFloat(f.rate),
       principal: f.principal === '' ? '' : parseFloat(f.principal),
-      maturity: f.maturity === '' ? '' : parseFloat(f.maturity),
+      /* periodic payout: maturity is always stored as the principal */
+      maturity: !f.interestOnMaturity
+        ? (f.principal === '' ? '' : parseFloat(f.principal))
+        : (f.maturity === '' ? '' : parseFloat(f.maturity)),
       interestOnMaturity: f.interestOnMaturity,
       compounding: f.compounding,
       status: f.status,
@@ -1332,18 +1363,22 @@ function FdForm({ initial, accounts, busy, onCancel, onSave }){
               <Field id="f-principal" label="Principal (₹)" auto={isAuto('principal', f.principal)}>
                 <input id="f-principal" className="num-in" inputMode="decimal" value={f.principal} placeholder="50000"
                        onChange={function(e){ setField('principal', e.target.value); }} />
+                {M.fmtINRWords(f.principal) ? <div className="muted small num-words">≈ {M.fmtINRWords(f.principal)}</div> : null}
               </Field>
               <Field id="f-maturity" label="Maturity (₹)" auto={isAuto('maturity', f.maturity)}>
                 <input id="f-maturity" className="num-in" inputMode="decimal" value={f.maturity}
+                       disabled={!f.interestOnMaturity}
+                       title={!f.interestOnMaturity ? 'Periodic payout: maturity always equals the principal' : ''}
                        onChange={function(e){ setField('maturity', e.target.value); }} />
+                {M.fmtINRWords(f.maturity) ? <div className="muted small num-words">≈ {M.fmtINRWords(f.maturity)}</div> : null}
               </Field>
             </div>
             <div className="readout">
-              <span>Interest&nbsp;<b className="accent">{liveInterest === null ? '—' : M.fmtINR(M.round2(liveInterest))}</b><span className="muted"> (maturity − principal)</span></span>
-              {!f.interestOnMaturity ? <span className="muted">Periodic payout: maturity equals principal; the rate is informational.</span> : null}
+              <span>Interest&nbsp;<b className="accent">{liveInterest === null ? '—' : M.fmtINR(M.round2(liveInterest))}</b>{liveInterest !== null && M.fmtINRWords(liveInterest) ? <span className="muted"> ≈ {M.fmtINRWords(liveInterest)}</span> : null}<span className="muted"> (maturity − principal)</span></span>
+              {!f.interestOnMaturity ? <span className="muted">Periodic payout: maturity is locked to the principal; the rate is informational.</span> : null}
             </div>
             <div style={{ marginBottom: 11 }}>
-              <button type="button" className="link-btn" onClick={recalcMaturity}>
+              <button type="button" className="link-btn" onClick={recalcMaturity} disabled={!f.interestOnMaturity}>
                 ↻ Recalculate maturity from principal &amp; rate
               </button>
               <span className="muted small"> — use after correcting a rate; overrides the typed maturity</span>
@@ -1395,14 +1430,18 @@ function App(){
   const [editing, setEditing] = useState(null);      /* null | 'new' | fd */
   const [accEditing, setAccEditing] = useState(null); /* null | 'new' | account */
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [loginErr, setLoginErr] = useState('');
-  const [toast, setToast] = useState('');
+  const [toast, setToast] = useState(null); /* {msg, kind:'success'|'error'} */
 
   useEffect(function(){
     if (!toast) return;
-    const t = setTimeout(function(){ setToast(''); }, 6000);
+    const t = setTimeout(function(){ setToast(null); }, 5000); /* self-hides in 5s */
     return function(){ clearTimeout(t); };
   }, [toast]);
+
+  function notifyOk(msg){ setToast({ msg: msg, kind: 'success' }); }
+  function notifyError(msg){ setToast({ msg: msg, kind: 'error' }); }
 
   async function login(pw){
     setLoginErr('');
@@ -1435,7 +1474,7 @@ function App(){
       }
       return true;
     } catch (e) {
-      setToast(e.message === 'unauthorized' ? 'Session rejected — the password may have changed. Refresh and sign in again.' : 'Save failed: ' + e.message);
+      notifyError(e.message === 'unauthorized' ? 'Session rejected — the password may have changed. Reload the page and sign in again.' : 'Save failed: ' + e.message);
       return false;
     } finally {
       setBusy(false);
@@ -1467,8 +1506,25 @@ function App(){
     if (window.confirm(label)) mutate({ action:'delete', id: fd.id });
   }
 
-  async function sync(){
-    await mutate({ action:'list' });
+  /* Background reload from the sheet; never blocks the UI, announces itself. */
+  async function refresh(){
+    if (!LIVE || refreshing) return;
+    setRefreshing(true);
+    try {
+      const j = await postApi({ action:'list', password: auth.password });
+      setData({ fds: j.fds, accounts: j.accounts });
+      notifyOk('Refreshed');
+    } catch (e) {
+      notifyError('Refresh failed: ' + e.message);
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  /* Switching views re-pulls the sheet so the numbers are never stale. */
+  function switchTab(t){
+    if (t !== tab && LIVE) refresh();
+    setTab(t);
   }
 
   if (!auth) return <Login onLogin={login} busy={busy} error={loginErr} />;
@@ -1494,16 +1550,16 @@ function App(){
         <span className={'mode-badge ' + (LIVE ? 'live' : 'demo')}>{LIVE ? 'LIVE' : 'DEMO'}</span>
         <nav className="tabs" aria-label="Views">
           <button type="button" className={'tab-btn' + (tab === 'dashboard' ? ' on' : '')}
-                  onClick={function(){ setTab('dashboard'); }}>Dashboard</button>
+                  onClick={function(){ switchTab('dashboard'); }}>Dashboard</button>
           <button type="button" className={'tab-btn' + (tab === 'all' ? ' on' : '')}
-                  onClick={function(){ setTab('all'); }}>All FDs</button>
+                  onClick={function(){ switchTab('all'); }}>All FDs</button>
           <button type="button" className={'tab-btn' + (tab === 'accounts' ? ' on' : '')}
-                  onClick={function(){ setTab('accounts'); }}>Accounts</button>
+                  onClick={function(){ switchTab('accounts'); }}>Accounts</button>
         </nav>
         <div className="topbar-actions">
           {LIVE && (
-            <button type="button" className="btn" title="Reload from the Google Sheet" aria-label="Reload from the Google Sheet"
-                    onClick={sync} disabled={busy}>↻</button>
+            <button type="button" className="btn" title="Reload from the Google Sheet"
+                    onClick={refresh} disabled={refreshing}>↻ {refreshing ? 'Refreshing…' : 'Refresh'}</button>
           )}
           <button type="button" className="btn primary" onClick={function(){ setEditing('new'); }}>＋ Add FD</button>
         </div>
@@ -1543,9 +1599,9 @@ function App(){
       )}
 
       {toast && (
-        <div className="toast" role="alert">
-          <span>{toast}</span>
-          <button type="button" aria-label="Dismiss" onClick={function(){ setToast(''); }}>✕</button>
+        <div className={'toast ' + toast.kind} role={toast.kind === 'error' ? 'alert' : 'status'}>
+          <span>{toast.kind === 'success' ? '✓ ' : ''}{toast.msg}</span>
+          <button type="button" aria-label="Dismiss" onClick={function(){ setToast(null); }}>✕</button>
         </div>
       )}
     </div>
