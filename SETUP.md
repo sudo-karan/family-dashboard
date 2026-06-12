@@ -126,6 +126,19 @@ To import each CSV into the Google Sheet:
 4. After importing, re-check that the three plain-text columns from step 1.4
    still show full FD numbers (no `5.03E+13`) and `YYYY-MM-DD` dates.
 
+## The change log
+
+A third tab named **`Log`** appears automatically the first time anyone adds,
+edits or deletes something through the app. It powers the dashboard's
+"Recent changes" panel and the **Undo** button — don't rename it or edit its
+rows by hand (the Before/After columns hold the data Undo restores). The
+optional "Device name" on the sign-in screen is what shows up as *who* made
+each change.
+
+> Updating from an earlier version? Re-paste `Code.gs` and publish a **new
+> version** (Deploy → Manage deployments → ✏ → New version → Deploy),
+> otherwise changes won't be logged and Undo won't work.
+
 ## Adding rows by hand later
 
 The app is the comfortable way to add FDs, but editing the sheet directly is
