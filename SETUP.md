@@ -84,14 +84,25 @@ in **Demo mode** (sample data, nothing saved) — handy for trying the UI first.
 ## 5. Host it on GitHub Pages
 
 1. Create a GitHub repository (private is fine — Pages still works) and commit
-   `index.html` to the `main` branch.
+   **all the files in this repo** (`index.html`, `manifest.webmanifest`,
+   `sw.js`, and the `icons/` folder) to the `main` branch.
 2. Repo **Settings → Pages → Build and deployment**: Source = **Deploy from a
    branch**, Branch = **main**, folder = **/ (root)**. Save.
 3. After a minute your app is at `https://<username>.github.io/<repo>/`.
-   Open it, sign in with the family password, and you're live.
+   Open it, sign in with the family password, and you're live. The sign-in is
+   remembered on each device until that person taps **Sign out**.
 
-The same `index.html` also works by simply **double-clicking the file** —
-useful as a backup if GitHub is ever unreachable.
+`index.html` also works by simply **double-clicking the file** — useful as a
+backup if GitHub is ever unreachable (the PWA extras are ignored there).
+
+## 5b. Install it like an app (optional, recommended for parents)
+
+- **Android (Chrome):** open the Pages URL → ⋮ menu → **Add to Home screen**
+  (or **Install app**). It opens full-screen with its own ₹ icon.
+- **iPhone / iPad (Safari):** open the URL → Share □↑ → **Add to Home Screen**.
+
+Because the sign-in is remembered, the installed app opens straight into the
+dashboard.
 
 ## 6. (Optional) Import the existing FDs
 
@@ -126,6 +137,11 @@ number automatically the next time anyone opens the app.
 
 - The password is checked **server-side** (in Apps Script) on every request;
   it never appears in `index.html` or in the browser's code.
+- After a successful sign-in the password is remembered **on that device** in
+  a cookie (~6 months) so the family doesn't retype it. **Sign out** forgets
+  it; changing the `FAMILY_PASSWORD` script property signs every device out
+  at once. Anyone who can unlock a family phone can open the app — that is
+  the convenience trade-off, chosen deliberately.
 - Anyone who has **both** the web-app URL **and** the password can read and
   edit the data. Anyone with only the URL gets `unauthorized`.
 - Traffic is HTTPS end-to-end. The data itself sits in your Google account,
