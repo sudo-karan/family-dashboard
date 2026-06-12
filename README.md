@@ -15,7 +15,10 @@ added.
 - **Add/edit form** — enter any two of *start / end / tenure* and any two of
   *rate / principal / maturity*; the third fills in automatically, and every
   computed value stays manually overridable (banks round differently — the
-  sheet's number wins).
+  sheet's number wins). One exception: a **periodic-payout** FD's maturity is
+  locked to its principal and the field is disabled.
+- **Readable amounts** — big numbers carry their Indian-words equivalent
+  everywhere (₹82,50,000 ≈ 82.5 lakh) so a misplaced zero is obvious.
 - **Google Sheets is the database** — the family can keep editing the sheet
   directly; the app and the sheet never fight.
 
