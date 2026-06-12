@@ -486,21 +486,23 @@ function demoSeed(){
       mk(5, 'RICHIE POST OFFICE', 'NA', -200, 1626, 7.5, 100000, { remarks:'5-year time deposit' }),
       mk(6, 'Stable Money', '000140459999111', -265, 100, 8.6, 25000, { remarks:'Suryoday SF Bank' }),
       mk(7, 'DAD HDFC', '50300055556666', -800, -230, 7, 100000,
-         { status:'Inactive', remarks:'Matured — reinvested' }),
+         { status:'Inactive', showInDashboard:false, remarks:'Matured — reinvested' }),
       mk(8, 'RICHIE POST OFFICE', 'nsc 20150001111', -50, 1776, 7.7, 150000,
          { showInDashboard:false, remarks:'NSC — tracked separately' })
     ]
   };
 }
 
-/* Demo-mode CRUD: mirrors what Code.gs does server-side. */
+/* Demo-mode CRUD: mirrors what Code.gs does server-side (guard violations throw,
+ * exactly like the backend returning {ok:false, error}). */
 function demoMutate(data, body){
   let fds = data.fds.slice();
   let accounts = data.accounts.slice();
+  const lower = function(s){ return String(s == null ? '' : s).trim().toLowerCase(); };
   const na = body.newAccount;
   if (na && na.name && String(na.name).trim()){
     const name = String(na.name).trim();
-    const exists = accounts.some(function(a){ return a.name.toLowerCase() === name.toLowerCase(); });
+    const exists = accounts.some(function(a){ return lower(a.name) === lower(name); });
     if (!exists) accounts = accounts.concat([{ name:name, person:na.person || '', bank:na.bank || '' }]);
   }
   if (body.action === 'create'){
@@ -510,6 +512,35 @@ function demoMutate(data, body){
     fds = fds.map(function(f){ return f.id === body.fd.id ? Object.assign({}, f, body.fd) : f; });
   } else if (body.action === 'delete'){
     fds = fds.filter(function(f){ return f.id !== body.id; });
+  } else if (body.action === 'accountCreate'){
+    const name = String(body.account && body.account.name || '').trim();
+    if (!name) throw new Error('account name is required');
+    if (accounts.some(function(a){ return lower(a.name) === lower(name); }))
+      throw new Error('an account named “' + name + '” already exists');
+    accounts = accounts.concat([{ name:name,
+      person:String(body.account.person || '').trim(), bank:String(body.account.bank || '').trim() }]);
+  } else if (body.action === 'accountUpdate'){
+    const orig = String(body.originalName || '').trim();
+    const idx = accounts.findIndex(function(a){ return lower(a.name) === lower(orig); });
+    if (idx < 0) throw new Error('account “' + orig + '” not found');
+    const name = String(body.account && body.account.name || '').trim();
+    if (!name) throw new Error('account name is required');
+    if (accounts.some(function(a, i){ return i !== idx && lower(a.name) === lower(name); }))
+      throw new Error('an account named “' + name + '” already exists');
+    accounts = accounts.map(function(a, i){
+      return i === idx ? { name:name,
+        person:String(body.account.person || '').trim(), bank:String(body.account.bank || '').trim() } : a;
+    });
+    if (name !== orig){
+      fds = fds.map(function(f){
+        return lower(f.account) === lower(orig) ? Object.assign({}, f, { account:name }) : f;
+      });
+    }
+  } else if (body.action === 'accountDelete'){
+    const name = String(body.name || '').trim();
+    const used = fds.filter(function(f){ return lower(f.account) === lower(name); }).length;
+    if (used > 0) throw new Error('cannot delete “' + name + '”: ' + used + ' FD(s) still use this account');
+    accounts = accounts.filter(function(a){ return lower(a.name) !== lower(name); });
   }
   return { fds:fds, accounts:accounts };
 }
@@ -549,6 +580,11 @@ function interestOf(fd){
   return (fd.maturity > 0) ? fd.maturity - fd.principal : null;
 }
 
+/* Inactive FDs never count toward the dashboard; the flag applies to Active FDs. */
+function isOnDashboard(fd){
+  return fd.status === 'Active' && !!fd.showInDashboard;
+}
+
 function tenureCellOf(fd){
   if (M.parseISO(fd.startDate) && M.parseISO(fd.endDate)){
     return { label: M.tenureLabel(M.diffYMD(fd.startDate, fd.endDate)), days: M.diffDays(fd.startDate, fd.endDate) };
@@ -584,9 +620,12 @@ function Login({ onLogin, busy, error }){
 }
 
 /* ============================== dashboard ============================== */
-function StatCards({ shown }){
-  const active = shown.filter(function(f){ return f.status === 'Active'; }).length;
-  const inactive = shown.length - active;
+function StatCards({ fds, shown }){
+  const inactive = fds.filter(function(f){ return f.status !== 'Active'; }).length;
+  const hiddenActive = fds.filter(function(f){ return f.status === 'Active' && !f.showInDashboard; }).length;
+  const ex = [];
+  if (inactive) ex.push(inactive + ' inactive');
+  if (hiddenActive) ex.push(hiddenActive + ' hidden');
   const tp = shown.reduce(function(s, f){ return s + (Number(f.principal) || 0); }, 0);
   const tm = shown.reduce(function(s, f){ return s + (Number(f.maturity) || 0); }, 0);
   const accounts = {};
@@ -597,7 +636,7 @@ function StatCards({ shown }){
       <div className="card">
         <div className="card-label">Deposits in view</div>
         <div className="card-value">{shown.length}</div>
-        <div className="card-sub">{active} active · {inactive} inactive</div>
+        <div className="card-sub">{ex.length ? 'excludes ' + ex.join(' · ') : 'all deposits counted'}</div>
       </div>
       <div className="card">
         <div className="card-label">Total principal</div>
@@ -693,7 +732,7 @@ function Breakdown({ title, rows }){
 }
 
 function Dashboard({ fds, onEdit }){
-  const shown = fds.filter(function(f){ return f.showInDashboard; });
+  const shown = fds.filter(isOnDashboard);
   function group(keyFn, subFn){
     const map = {};
     shown.forEach(function(f){
@@ -708,7 +747,7 @@ function Dashboard({ fds, onEdit }){
   }
   return (
     <div>
-      <StatCards shown={shown} />
+      <StatCards fds={fds} shown={shown} />
       <MaturingSoon shown={shown} onEdit={onEdit} />
       <div className="grid-2">
         <Breakdown title="By person" rows={group(function(f){ return f.person; })} />
@@ -788,8 +827,8 @@ function AllFDs({ fds, accounts, onEdit, onDelete }){
       if (person !== 'all' && f.person !== person) return false;
       if (account !== 'all' && f.account !== account) return false;
       if (status !== 'all' && f.status !== status) return false;
-      if (dash === 'shown' && !f.showInDashboard) return false;
-      if (dash === 'hidden' && f.showInDashboard) return false;
+      if (dash === 'shown' && !isOnDashboard(f)) return false;
+      if (dash === 'hidden' && isOnDashboard(f)) return false;
       if (needle){
         const hay = (String(f.accountNumber) + ' ' + f.bank + ' ' + f.remarks + ' ' + f.account).toLowerCase();
         if (hay.indexOf(needle) < 0) return false;
@@ -887,7 +926,7 @@ function AllFDs({ fds, accounts, onEdit, onDelete }){
                   <td className="num">{i === null ? '—' : M.fmtINR(M.round2(i))}</td>
                   <td><span className="small muted">{f.interestOnMaturity ? 'On maturity' : 'Periodic'}</span></td>
                   <td><span className={'pill ' + (f.status === 'Active' ? 'green' : 'gray')}>{f.status}</span></td>
-                  <td><span className={'pill ' + (f.showInDashboard ? 'green' : 'gray')}>{f.showInDashboard ? 'Shown' : 'Hidden'}</span></td>
+                  <td><span className={'pill ' + (isOnDashboard(f) ? 'green' : 'gray')}>{isOnDashboard(f) ? 'Shown' : 'Hidden'}</span></td>
                   <td className="remarks-cell" title={f.remarks || ''}>{f.remarks || ''}</td>
                   <td className="row-actions">
                     <button type="button" className="btn ghost small" onClick={function(){ onEdit(f); }}>Edit</button>
@@ -909,6 +948,136 @@ function AllFDs({ fds, accounts, onEdit, onDelete }){
           </tfoot>
         </table>
       </div>
+    </div>
+  );
+}
+
+/* ============================== accounts tab ============================== */
+function AccountsView({ accounts, fds, onAdd, onEdit, onDelete }){
+  const stats = {};
+  fds.forEach(function(f){
+    const s = stats[f.account] = stats[f.account] || { count:0, principal:0 };
+    s.count += 1;
+    s.principal += Number(f.principal) || 0;
+  });
+  const rows = accounts.slice().sort(function(a, b){
+    return (a.person || '').localeCompare(b.person || '') || a.name.localeCompare(b.name);
+  });
+  return (
+    <div className="panel">
+      <div className="panel-head" style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
+        <div>
+          <div className="panel-title">Accounts</div>
+          <div className="panel-sub">Each account ties its FDs to a person and a bank — what used to be a workbook tab.</div>
+        </div>
+        <button type="button" className="btn primary" onClick={onAdd}>＋ Add account</button>
+      </div>
+      {rows.length === 0 ? (
+        <div className="panel-empty">No accounts yet — add the first one.</div>
+      ) : (
+        <table className="mini-table">
+          <thead>
+            <tr><th>Account</th><th>Person</th><th>Bank</th><th className="num">FDs</th><th className="num">Principal</th><th aria-label="Actions"></th></tr>
+          </thead>
+          <tbody>
+            {rows.map(function(a){
+              const s = stats[a.name] || { count:0, principal:0 };
+              return (
+                <tr key={a.name}>
+                  <td><span className="share-name">{a.name}</span></td>
+                  <td>{a.person || '—'}</td>
+                  <td>{a.bank || '—'}</td>
+                  <td className="num">{s.count}</td>
+                  <td className="num">{s.count ? M.fmtINR(s.principal) : '—'}</td>
+                  <td className="row-actions" style={{ textAlign:'right' }}>
+                    <button type="button" className="btn ghost small" onClick={function(){ onEdit(a); }}>Edit</button>
+                    <button type="button" className="btn danger-ghost" aria-label={'Delete account ' + a.name}
+                            disabled={s.count > 0}
+                            title={s.count > 0 ? 'Move or delete its ' + s.count + ' FD(s) first' : 'Delete this account'}
+                            onClick={function(){ onDelete(a); }}>✕</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function AccountForm({ initial, accounts, fdCount, busy, onCancel, onSave }){
+  const editing = !!initial;
+  const [acc, setAcc] = useState(initial
+    ? { name: initial.name, person: initial.person || '', bank: initial.bank || '' }
+    : { name:'', person:'', bank:'' });
+  const [err, setErr] = useState('');
+
+  useEffect(function(){
+    function onKey(e){ if (e.key === 'Escape') onCancel(); }
+    document.addEventListener('keydown', onKey);
+    return function(){ document.removeEventListener('keydown', onKey); };
+  }, [onCancel]);
+
+  const persons = [];
+  accounts.forEach(function(a){ if (a.person && persons.indexOf(a.person) < 0) persons.push(a.person); });
+  const renamed = editing && acc.name.trim() !== initial.name;
+
+  function submit(e){
+    e.preventDefault();
+    const name = acc.name.trim();
+    if (!name){ setErr('The account needs a name.'); return; }
+    const dup = accounts.some(function(a){
+      return a.name.toLowerCase() === name.toLowerCase() && (!editing || a.name !== initial.name);
+    });
+    if (dup){ setErr('An account named “' + name + '” already exists.'); return; }
+    onSave({ name:name, person:acc.person.trim(), bank:acc.bank.trim() }, editing ? initial.name : null);
+  }
+
+  return (
+    <div className="overlay" onMouseDown={function(e){ if (e.target === e.currentTarget) onCancel(); }}>
+      <form className="modal" style={{ maxWidth:520 }} role="dialog" aria-modal="true"
+            aria-label={editing ? 'Edit account' : 'Add account'} onSubmit={submit}>
+        <div className="modal-head">
+          <h2>{editing ? 'Edit account' : 'Add an account'}</h2>
+          <button type="button" className="btn ghost" aria-label="Close" onClick={onCancel}>✕</button>
+        </div>
+        <div className="modal-body">
+          {err && <div className="frm-err" role="alert">{err}</div>}
+          <div className="frm-section">
+            <div className="frm-row">
+              <Field id="acc-name" label="Account name">
+                <input id="acc-name" type="text" value={acc.name} placeholder="e.g. MOM HDFC" autoFocus
+                       onChange={function(e){ setAcc(Object.assign({}, acc, { name: e.target.value })); }} />
+              </Field>
+              <Field id="acc-person" label="Person">
+                <input id="acc-person" type="text" list="acc-persons-list" value={acc.person} placeholder="e.g. Mom"
+                       onChange={function(e){ setAcc(Object.assign({}, acc, { person: e.target.value })); }} />
+                <datalist id="acc-persons-list">
+                  {persons.map(function(p){ return <option key={p} value={p} />; })}
+                </datalist>
+              </Field>
+            </div>
+            <div className="frm-row">
+              <Field id="acc-bank" label="Bank">
+                <input id="acc-bank" type="text" value={acc.bank} placeholder="e.g. HDFC"
+                       onChange={function(e){ setAcc(Object.assign({}, acc, { bank: e.target.value })); }} />
+              </Field>
+            </div>
+            {renamed && fdCount > 0 ? (
+              <div className="readout">
+                <span>Renaming will also update <b>{fdCount}</b> FD{fdCount === 1 ? '' : 's'} under “{initial.name}”.</span>
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button type="button" className="btn" onClick={onCancel}>Cancel</button>
+          <button type="submit" className="btn primary" disabled={busy}>
+            {busy ? 'Saving…' : (editing ? 'Save changes' : 'Add account')}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -959,6 +1128,7 @@ function FdForm({ initial, accounts, busy, onCancel, onSave }){
       if (pk === 'tenure') np.tenure = M.tenureEntered(nf);
       else if (pk) np[pk] = value !== '';
       if (name === 'interestOnMaturity') np.maturity = false; /* payout toggle un-pins maturity */
+      if (name === 'status') nf.showInDashboard = value === 'Active'; /* inactive never counts */
       return { f: M.solveForm(nf, np), pins: np };
     });
   }
@@ -1010,7 +1180,7 @@ function FdForm({ initial, accounts, busy, onCancel, onSave }){
       interestOnMaturity: f.interestOnMaturity,
       compounding: f.compounding,
       status: f.status,
-      showInDashboard: f.showInDashboard,
+      showInDashboard: f.status === 'Active' ? f.showInDashboard : false,
       remarks: String(f.remarks).trim()
     };
     if (editing) fd.id = initial.id;
@@ -1192,10 +1362,12 @@ function FdForm({ initial, accounts, busy, onCancel, onSave }){
               <div className="field">
                 <label htmlFor="f-show">Dashboard</label>
                 <div className="check-row">
-                  <input id="f-show" type="checkbox" checked={f.showInDashboard}
+                  <input id="f-show" type="checkbox" checked={f.showInDashboard && f.status === 'Active'}
+                         disabled={f.status !== 'Active'}
                          onChange={function(e){ setField('showInDashboard', e.target.checked); }} />
                   <label htmlFor="f-show" style={{ margin:0, fontWeight:500 }}>Count in dashboard totals</label>
                 </div>
+                {f.status !== 'Active' ? <div className="muted small">Inactive FDs are never counted in the dashboard.</div> : null}
               </div>
               <Field id="f-remarks" label="Remarks">
                 <input id="f-remarks" type="text" value={f.remarks} placeholder="nominee, sub-bank, notes…"
@@ -1220,7 +1392,8 @@ function App(){
   const [auth, setAuth] = useState(null);
   const [data, setData] = useState(null);
   const [tab, setTab] = useState('dashboard');
-  const [editing, setEditing] = useState(null);   /* null | 'new' | fd */
+  const [editing, setEditing] = useState(null);      /* null | 'new' | fd */
+  const [accEditing, setAccEditing] = useState(null); /* null | 'new' | account */
   const [busy, setBusy] = useState(false);
   const [loginErr, setLoginErr] = useState('');
   const [toast, setToast] = useState('');
@@ -1258,7 +1431,7 @@ function App(){
         const j = await postApi(Object.assign({}, body, { password: auth.password }));
         setData({ fds: j.fds, accounts: j.accounts });
       } else {
-        setData(function(d){ return demoMutate(d, body); });
+        setData(demoMutate(data, body)); /* throws on guard violations, like the backend */
       }
       return true;
     } catch (e) {
@@ -1272,6 +1445,19 @@ function App(){
   async function handleSave(fd, newAccount){
     const ok = await mutate({ action: fd.id ? 'update' : 'create', fd: fd, newAccount: newAccount });
     if (ok) setEditing(null);
+  }
+
+  async function handleAccountSave(account, originalName){
+    const ok = await mutate(originalName
+      ? { action:'accountUpdate', account: account, originalName: originalName }
+      : { action:'accountCreate', account: account });
+    if (ok) setAccEditing(null);
+  }
+
+  function handleAccountDelete(acc){
+    if (window.confirm('Delete account “' + acc.name + '”?' + (LIVE ? '\nThis removes the row from the Accounts tab of the sheet.' : ''))){
+      mutate({ action:'accountDelete', name: acc.name });
+    }
   }
 
   function handleDelete(fd){
@@ -1293,7 +1479,7 @@ function App(){
     const a = accountsByName[f.account];
     return Object.assign({}, f, { person: a ? a.person : '—', bank: a ? a.bank : '—' });
   });
-  const shownCount = joined.filter(function(f){ return f.showInDashboard; }).length;
+  const shownCount = joined.filter(isOnDashboard).length;
 
   return (
     <div className="app">
@@ -1311,6 +1497,8 @@ function App(){
                   onClick={function(){ setTab('dashboard'); }}>Dashboard</button>
           <button type="button" className={'tab-btn' + (tab === 'all' ? ' on' : '')}
                   onClick={function(){ setTab('all'); }}>All FDs</button>
+          <button type="button" className={'tab-btn' + (tab === 'accounts' ? ' on' : '')}
+                  onClick={function(){ setTab('accounts'); }}>Accounts</button>
         </nav>
         <div className="topbar-actions">
           {LIVE && (
@@ -1329,9 +1517,12 @@ function App(){
       )}
 
       <main>
-        {tab === 'dashboard'
-          ? <Dashboard fds={joined} onEdit={function(f){ setEditing(f); }} />
-          : <AllFDs fds={joined} accounts={data.accounts} onEdit={function(f){ setEditing(f); }} onDelete={handleDelete} />}
+        {tab === 'dashboard' && <Dashboard fds={joined} onEdit={function(f){ setEditing(f); }} />}
+        {tab === 'all' && <AllFDs fds={joined} accounts={data.accounts} onEdit={function(f){ setEditing(f); }} onDelete={handleDelete} />}
+        {tab === 'accounts' && <AccountsView accounts={data.accounts} fds={joined}
+                onAdd={function(){ setAccEditing('new'); }}
+                onEdit={function(a){ setAccEditing(a); }}
+                onDelete={handleAccountDelete} />}
       </main>
 
       {editing !== null && (
@@ -1340,6 +1531,15 @@ function App(){
                 busy={busy}
                 onCancel={function(){ setEditing(null); }}
                 onSave={handleSave} />
+      )}
+
+      {accEditing !== null && (
+        <AccountForm initial={accEditing === 'new' ? null : accEditing}
+                accounts={data.accounts}
+                fdCount={accEditing === 'new' ? 0 : joined.filter(function(f){ return f.account === accEditing.name; }).length}
+                busy={busy}
+                onCancel={function(){ setAccEditing(null); }}
+                onSave={handleAccountSave} />
       )}
 
       {toast && (

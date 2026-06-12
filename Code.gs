@@ -97,6 +97,12 @@ function doPost(e) {
       updateFd(req.fd || {});
     } else if (action === 'delete') {
       deleteFd(req.id);
+    } else if (action === 'accountCreate') {
+      accountCreate(req.account || {});
+    } else if (action === 'accountUpdate') {
+      accountUpdate(req.account || {}, req.originalName);
+    } else if (action === 'accountDelete') {
+      accountDelete(req.name);
     } else {
       return jsonOut({ ok: false, error: 'unknown action: ' + action });
     }
@@ -320,19 +326,106 @@ function applyDefaults(fd) {
   return fd;
 }
 
+/** Silent upsert used when an FD is saved with an inline-added account. */
 function upsertAccount(acc) {
   if (!acc || !acc.name || !String(acc.name).trim()) return;
   var name = String(acc.name).trim();
-  var existing = readAccounts();
-  for (var i = 0; i < existing.length; i++) {
-    if (existing[i].name.toLowerCase() === name.toLowerCase()) return;
+  var sheet = getSheet(ACCOUNTS_SHEET);
+  var map = headerMap(sheet);
+  if (findAccountRow(sheet, map, name)) return;
+  appendAccountRow(sheet, map, acc);
+}
+
+/** 1-based row index of the account with this name (case-insensitive), or 0. */
+function findAccountRow(sheet, map, name) {
+  if (!('name' in map)) throw new Error("the Accounts sheet has no Name column");
+  var want = String(name == null ? '' : name).trim().toLowerCase();
+  if (!want) return 0;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 0;
+  var vals = sheet.getRange(2, map.name + 1, lastRow - 1, 1).getValues();
+  for (var r = 0; r < vals.length; r++) {
+    if (String(vals[r][0]).trim().toLowerCase() === want) return r + 2;
+  }
+  return 0;
+}
+
+function accountRowValues(sheet, map, acc) {
+  var row = [];
+  for (var c = 0; c < sheet.getLastColumn(); c++) row.push('');
+  if ('name' in map) row[map.name] = String(acc.name || '').trim();
+  if ('person' in map) row[map.person] = String(acc.person || '').trim();
+  if ('bank' in map) row[map.bank] = String(acc.bank || '').trim();
+  return row;
+}
+
+function appendAccountRow(sheet, map, acc) {
+  var row = accountRowValues(sheet, map, acc);
+  sheet.getRange(sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+}
+
+function accountCreate(acc) {
+  var name = String(acc.name || '').trim();
+  if (!name) throw new Error('account name is required');
+  var sheet = getSheet(ACCOUNTS_SHEET);
+  var map = headerMap(sheet);
+  if (findAccountRow(sheet, map, name)) {
+    throw new Error('an account named "' + name + '" already exists');
+  }
+  appendAccountRow(sheet, map, acc);
+}
+
+function accountUpdate(acc, originalName) {
+  var orig = String(originalName || '').trim();
+  var name = String(acc.name || '').trim();
+  if (!name) throw new Error('account name is required');
+  var sheet = getSheet(ACCOUNTS_SHEET);
+  var map = headerMap(sheet);
+  var rowIndex = findAccountRow(sheet, map, orig);
+  if (!rowIndex) throw new Error('account "' + orig + '" not found');
+  var dup = findAccountRow(sheet, map, name);
+  if (dup && dup !== rowIndex) {
+    throw new Error('an account named "' + name + '" already exists');
+  }
+  var row = accountRowValues(sheet, map, acc);
+  sheet.getRange(rowIndex, 1, 1, row.length).setValues([row]);
+  // Renaming must not orphan deposits: cascade to the FDs tab.
+  if (name !== orig) renameFdAccounts(orig, name);
+}
+
+function renameFdAccounts(oldName, newName) {
+  var sheet = getSheet(FD_SHEET);
+  var map = headerMap(sheet);
+  if (!('account' in map)) return;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  var rng = sheet.getRange(2, map.account + 1, lastRow - 1, 1);
+  var vals = rng.getValues();
+  var want = String(oldName || '').trim().toLowerCase();
+  var changed = false;
+  for (var r = 0; r < vals.length; r++) {
+    if (String(vals[r][0]).trim().toLowerCase() === want) {
+      vals[r][0] = newName;
+      changed = true;
+    }
+  }
+  if (changed) rng.setValues(vals);
+}
+
+function accountDelete(name) {
+  var want = String(name || '').trim().toLowerCase();
+  if (!want) throw new Error('missing account name');
+  var fds = readFds();
+  var used = 0;
+  for (var i = 0; i < fds.length; i++) {
+    if (String(fds[i].account).trim().toLowerCase() === want) used += 1;
+  }
+  if (used > 0) {
+    throw new Error('cannot delete "' + name + '": ' + used + ' FD(s) still use this account');
   }
   var sheet = getSheet(ACCOUNTS_SHEET);
   var map = headerMap(sheet);
-  var row = [];
-  for (var c = 0; c < sheet.getLastColumn(); c++) row.push('');
-  if ('name' in map) row[map.name] = name;
-  if ('person' in map) row[map.person] = String(acc.person || '').trim();
-  if ('bank' in map) row[map.bank] = String(acc.bank || '').trim();
-  sheet.getRange(sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+  var rowIndex = findAccountRow(sheet, map, name);
+  if (!rowIndex) throw new Error('account "' + name + '" not found');
+  sheet.deleteRow(rowIndex);
 }
