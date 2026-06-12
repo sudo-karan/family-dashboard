@@ -26,6 +26,10 @@ added.
   (parents sign in once); a **Sign out** button forgets it. Changing
   `FAMILY_PASSWORD` in Apps Script signs every device out at once.
 - **Light & dark mode** — follows the device by default, with a toggle.
+- **Change log + Undo** — every add/edit/delete shows up in a "Recent
+  changes" panel on the dashboard (with the device name that did it), and
+  the latest change to any FD or account can be undone — a deleted FD comes
+  back with the same ID, an edit reverts to its previous values.
 - **Google Sheets is the database** — the family can keep editing the sheet
   directly; the app and the sheet never fight.
 
@@ -45,8 +49,8 @@ theme choice — all data lives in memory and in the sheet.
 **The backend is a Google Apps Script web app** (`Code.gs`) bound to the
 spreadsheet. It exposes one `doPost` endpoint accepting
 `{action: list | create | update | delete | accountCreate | accountUpdate |
-accountDelete, password, …}` and
-always replies with the full fresh state `{ok, fds, accounts}`, so the client
+accountDelete | undo, password, device?, …}` and
+always replies with the full fresh state `{ok, fds, accounts, log}`, so the client
 just replaces what it has — no merging, no cache to go stale. The shared
 family password is stored as a **script property**, never in code, and is
 checked server-side on every request. Writes are serialized with
@@ -66,6 +70,12 @@ requests that Apps Script can answer without a preflight.
 - `Accounts` — `Name, Person, Bank`. One row per account ledger (what used to
   be a tab, e.g. `DAD HDFC`). All grouping joins through this tab, so people
   and banks are data, not code.
+- `Log` — auto-created on the first change. One row per add/edit/delete/undo
+  with a JSON *before/after image* of the affected row — those images are
+  what make Undo trustworthy. **Don't edit this tab by hand.** An entry is
+  undoable only while it is the latest change to that FD/account (so an undo
+  can never silently clobber a newer edit); undo entries themselves can't be
+  undone.
 
 ## Repo map
 

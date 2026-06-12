@@ -135,6 +135,13 @@
   .soon-mat{ display:block; font-weight:700; font-variant-numeric:tabular-nums; }
   .soon-pr{ display:block; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
 
+  .log-row{ display:flex; align-items:center; gap:12px; padding:10px 18px; border-bottom:1px solid var(--line-2); }
+  .log-row:last-child{ border-bottom:0; }
+  .log-pill{ flex:none; min-width:66px; text-align:center; }
+  .log-main{ flex:1 1 auto; min-width:0; }
+  .log-sum{ display:block; font-size:14px; overflow-wrap:anywhere; }
+  .log-meta{ display:block; font-size:11.5px; color:var(--muted); }
+
   .grid-2{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }
   @media (max-width: 820px){ .grid-2{ grid-template-columns:1fr; } }
 
@@ -524,6 +531,30 @@ const FDMath = (function(){
 })();
 
 /* ===================================================================== *
+ *  Change-log helpers shared by demo mode and the UI. The backend keeps
+ *  the same rules in Code.gs: an entry is undoable only while it is the
+ *  latest change to its target, is not an undo itself, and is not undone.
+ * ===================================================================== */
+function nowStamp(){
+  const t = new Date();
+  const p = function(n){ return (n < 10 ? '0' : '') + n; };
+  return t.getFullYear() + '-' + p(t.getMonth() + 1) + '-' + p(t.getDate()) +
+    ' ' + p(t.getHours()) + ':' + p(t.getMinutes());
+}
+
+/* Raw (oldest-first) log -> newest-first display list with canUndo. */
+function annotateLog(rawLog){
+  const newestFirst = (rawLog || []).slice().reverse();
+  return newestFirst.slice(0, 15).map(function(e, i){
+    let blocked = !!e.undone || e.action === 'undo';
+    for (let j = 0; j < i && !blocked; j++){
+      if (newestFirst[j].target === e.target) blocked = true;
+    }
+    return Object.assign({}, e, { canUndo: !blocked });
+  });
+}
+
+/* ===================================================================== *
  *  Demo data (only used when APPS_SCRIPT_URL is empty). Dates are relative
  *  to "today" so the dashboard always looks alive. All figures fictional.
  * ===================================================================== */
@@ -545,55 +576,90 @@ function demoSeed(){
       status:opts.status || 'Active', showInDashboard:opts.showInDashboard !== false,
       remarks:opts.remarks || '' };
   }
-  return {
-    accounts: [
-      { name:'DAD HDFC', person:'Dad', bank:'HDFC' },
-      { name:'MOM SBI', person:'Mom', bank:'SBI' },
-      { name:'RICHIE POST OFFICE', person:'Richie', bank:'Post Office' },
-      { name:'Stable Money', person:'Richie', bank:'Stable Money' }
-    ],
-    fds: [
-      mk(1, 'DAD HDFC', '50300011112222', -500, 47, 7.25, 200000),
-      mk(2, 'DAD HDFC', '50300033334444', -300, 247, 7.1, 50000),
-      mk(3, 'MOM SBI', '44591111222', -385, -20, 6.8, 150000, { remarks:'Renewal due' }),
-      mk(4, 'MOM SBI', '44593333444', -100, 265, 7.6, 300000,
-         { interestOnMaturity:false, remarks:'Quarterly interest to savings a/c' }),
-      mk(5, 'RICHIE POST OFFICE', 'NA', -200, 1626, 7.5, 100000, { remarks:'5-year time deposit' }),
-      mk(6, 'Stable Money', '000140459999111', -265, 100, 8.6, 25000, { remarks:'Suryoday SF Bank' }),
-      mk(7, 'DAD HDFC', '50300055556666', -800, -230, 7, 100000,
-         { status:'Inactive', showInDashboard:false, remarks:'Matured — reinvested' }),
-      mk(8, 'RICHIE POST OFFICE', 'nsc 20150001111', -50, 1776, 7.7, 150000,
-         { showInDashboard:false, remarks:'NSC — tracked separately' })
-    ]
-  };
+  const accounts = [
+    { name:'DAD HDFC', person:'Dad', bank:'HDFC' },
+    { name:'MOM SBI', person:'Mom', bank:'SBI' },
+    { name:'RICHIE POST OFFICE', person:'Richie', bank:'Post Office' },
+    { name:'Stable Money', person:'Richie', bank:'Stable Money' }
+  ];
+  const fds = [
+    mk(1, 'DAD HDFC', '50300011112222', -500, 47, 7.25, 200000),
+    mk(2, 'DAD HDFC', '50300033334444', -300, 247, 7.1, 50000),
+    mk(3, 'MOM SBI', '44591111222', -385, -20, 6.8, 150000, { remarks:'Renewal due' }),
+    mk(4, 'MOM SBI', '44593333444', -100, 265, 7.6, 300000,
+       { interestOnMaturity:false, remarks:'Quarterly interest to savings a/c' }),
+    mk(5, 'RICHIE POST OFFICE', 'NA', -200, 1626, 7.5, 100000, { remarks:'5-year time deposit' }),
+    mk(6, 'Stable Money', '000140459999111', -265, 100, 8.6, 25000, { remarks:'Suryoday SF Bank' }),
+    mk(7, 'DAD HDFC', '50300055556666', -800, -230, 7, 100000,
+       { status:'Inactive', showInDashboard:false, remarks:'Matured — reinvested' }),
+    mk(8, 'RICHIE POST OFFICE', 'nsc 20150001111', -50, 1776, 7.7, 150000,
+       { showInDashboard:false, remarks:'NSC — tracked separately' })
+  ];
+  /* two sample change-log entries so the dashboard panel looks alive; their
+   * before/after images are consistent, so Undo really works in the demo */
+  const fd1Before = Object.assign({}, fds[0], {
+    rate: 7,
+    maturity: Math.round(FDMath.maturityOf(fds[0].principal, 7, fds[0].tenureDays, 'quarterly'))
+  });
+  const rawLog = [
+    { id:1, time: shift(-1) + ' 18:05', device:"Jaskaran's laptop", action:'update', target:'fd:1',
+      summary:'Edited FD #1 · DAD HDFC', before: fd1Before, after: Object.assign({}, fds[0]), undone:false },
+    { id:2, time: shift(0) + ' 09:12', device:"Dad's phone", action:'create', target:'fd:8',
+      summary:'Added FD #8 · RICHIE POST OFFICE · ' + FDMath.fmtINR(fds[7].principal),
+      before:null, after: Object.assign({}, fds[7]), undone:false }
+  ];
+  return { accounts: accounts, fds: fds, log: annotateLog(rawLog), _rawLog: rawLog };
 }
 
 /* Demo-mode CRUD: mirrors what Code.gs does server-side (guard violations throw,
- * exactly like the backend returning {ok:false, error}). */
+ * exactly like the backend returning {ok:false, error}) — including the change
+ * log with before/after images and the undo semantics. */
 function demoMutate(data, body){
   let fds = data.fds.slice();
   let accounts = data.accounts.slice();
+  let log = (data._rawLog || []).slice();
   const lower = function(s){ return String(s == null ? '' : s).trim().toLowerCase(); };
+  const accountTarget = function(name){ return 'account:' + lower(name); };
+  const moneyBit = function(fd){ return fd.principal ? ' · ' + FDMath.fmtINR(fd.principal) : ''; };
+  const pushLog = function(action, target, summary, before, after){
+    const id = log.reduce(function(m, e){ return Math.max(m, e.id || 0); }, 0) + 1;
+    log.push({ id:id, time: nowStamp(), device: String(body.device || ''), action:action,
+      target:target, summary:summary, before: before || null, after: after || null, undone:false });
+  };
+
   const na = body.newAccount;
   if (na && na.name && String(na.name).trim()){
     const name = String(na.name).trim();
     const exists = accounts.some(function(a){ return lower(a.name) === lower(name); });
-    if (!exists) accounts = accounts.concat([{ name:name, person:na.person || '', bank:na.bank || '' }]);
+    if (!exists){
+      const acc = { name:name, person:String(na.person || '').trim(), bank:String(na.bank || '').trim() };
+      accounts = accounts.concat([acc]);
+      pushLog('accountCreate', accountTarget(name), 'Added account “' + name + '”', null, acc);
+    }
   }
   if (body.action === 'create'){
     const id = fds.reduce(function(m, f){ return Math.max(m, f.id || 0); }, 0) + 1;
-    fds = fds.concat([Object.assign({}, body.fd, { id:id })]);
+    const newFd = Object.assign({}, body.fd, { id:id });
+    fds = fds.concat([newFd]);
+    pushLog('create', 'fd:' + id, 'Added FD #' + id + ' · ' + (newFd.account || '') + moneyBit(newFd), null, newFd);
   } else if (body.action === 'update'){
-    fds = fds.map(function(f){ return f.id === body.fd.id ? Object.assign({}, f, body.fd) : f; });
+    const oldFd = fds.find(function(f){ return f.id === body.fd.id; });
+    const merged = oldFd ? Object.assign({}, oldFd, body.fd) : null;
+    fds = fds.map(function(f){ return f.id === body.fd.id ? merged : f; });
+    if (oldFd) pushLog('update', 'fd:' + oldFd.id, 'Edited FD #' + oldFd.id + ' · ' + (merged.account || ''), oldFd, merged);
   } else if (body.action === 'delete'){
+    const oldFd = fds.find(function(f){ return f.id === body.id; });
     fds = fds.filter(function(f){ return f.id !== body.id; });
+    if (oldFd) pushLog('delete', 'fd:' + oldFd.id, 'Deleted FD #' + oldFd.id + ' · ' + oldFd.account + moneyBit(oldFd), oldFd, null);
   } else if (body.action === 'accountCreate'){
     const name = String(body.account && body.account.name || '').trim();
     if (!name) throw new Error('account name is required');
     if (accounts.some(function(a){ return lower(a.name) === lower(name); }))
       throw new Error('an account named “' + name + '” already exists');
-    accounts = accounts.concat([{ name:name,
-      person:String(body.account.person || '').trim(), bank:String(body.account.bank || '').trim() }]);
+    const acc = { name:name,
+      person:String(body.account.person || '').trim(), bank:String(body.account.bank || '').trim() };
+    accounts = accounts.concat([acc]);
+    pushLog('accountCreate', accountTarget(name), 'Added account “' + name + '”', null, acc);
   } else if (body.action === 'accountUpdate'){
     const orig = String(body.originalName || '').trim();
     const idx = accounts.findIndex(function(a){ return lower(a.name) === lower(orig); });
@@ -602,22 +668,67 @@ function demoMutate(data, body){
     if (!name) throw new Error('account name is required');
     if (accounts.some(function(a, i){ return i !== idx && lower(a.name) === lower(name); }))
       throw new Error('an account named “' + name + '” already exists');
-    accounts = accounts.map(function(a, i){
-      return i === idx ? { name:name,
-        person:String(body.account.person || '').trim(), bank:String(body.account.bank || '').trim() } : a;
-    });
+    const before = accounts[idx];
+    const after = { name:name,
+      person:String(body.account.person || '').trim(), bank:String(body.account.bank || '').trim() };
+    accounts = accounts.map(function(a, i){ return i === idx ? after : a; });
     if (name !== orig){
       fds = fds.map(function(f){
         return lower(f.account) === lower(orig) ? Object.assign({}, f, { account:name }) : f;
       });
     }
+    pushLog('accountUpdate', accountTarget(after.name),
+      before.name !== after.name
+        ? 'Renamed account “' + before.name + '” → “' + after.name + '”'
+        : 'Edited account “' + after.name + '”',
+      before, after);
   } else if (body.action === 'accountDelete'){
     const name = String(body.name || '').trim();
     const used = fds.filter(function(f){ return lower(f.account) === lower(name); }).length;
     if (used > 0) throw new Error('cannot delete “' + name + '”: ' + used + ' FD(s) still use this account');
+    const before = accounts.find(function(a){ return lower(a.name) === lower(name); });
     accounts = accounts.filter(function(a){ return lower(a.name) !== lower(name); });
+    if (before) pushLog('accountDelete', accountTarget(before.name), 'Deleted account “' + before.name + '”', before, null);
+  } else if (body.action === 'undo'){
+    const entry = log.find(function(e){ return e.id === body.logId; });
+    if (!entry) throw new Error('log entry not found');
+    if (entry.undone) throw new Error('this change was already undone');
+    if (entry.action === 'undo') throw new Error('an undo cannot be undone');
+    if (log.some(function(e){ return e.id > entry.id && e.target === entry.target; }))
+      throw new Error('cannot undo: this item was changed again afterwards');
+    const before = entry.before, after = entry.after;
+    if (entry.action === 'create'){
+      if (!fds.some(function(f){ return f.id === after.id; })) throw new Error('FD with id ' + after.id + ' not found');
+      fds = fds.filter(function(f){ return f.id !== after.id; });
+    } else if (entry.action === 'update'){
+      fds = fds.map(function(f){ return f.id === before.id ? Object.assign({}, before) : f; });
+    } else if (entry.action === 'delete'){
+      if (fds.some(function(f){ return f.id === before.id; })) throw new Error('cannot undo: FD id ' + before.id + ' exists again');
+      fds = fds.concat([Object.assign({}, before)]);
+    } else if (entry.action === 'accountCreate'){
+      const usedBy = fds.filter(function(f){ return lower(f.account) === lower(after.name); }).length;
+      if (usedBy > 0) throw new Error('cannot delete “' + after.name + '”: ' + usedBy + ' FD(s) still use this account');
+      accounts = accounts.filter(function(a){ return lower(a.name) !== lower(after.name); });
+    } else if (entry.action === 'accountUpdate'){
+      const i2 = accounts.findIndex(function(a){ return lower(a.name) === lower(after.name); });
+      if (i2 < 0) throw new Error('account “' + after.name + '” not found');
+      accounts = accounts.map(function(a, i){ return i === i2 ? Object.assign({}, before) : a; });
+      if (lower(before.name) !== lower(after.name)){
+        fds = fds.map(function(f){
+          return lower(f.account) === lower(after.name) ? Object.assign({}, f, { account: before.name }) : f;
+        });
+      }
+    } else if (entry.action === 'accountDelete'){
+      if (accounts.some(function(a){ return lower(a.name) === lower(before.name); }))
+        throw new Error('an account named “' + before.name + '” already exists');
+      accounts = accounts.concat([Object.assign({}, before)]);
+    } else {
+      throw new Error('cannot undo action: ' + entry.action);
+    }
+    log = log.map(function(e){ return e.id === entry.id ? Object.assign({}, e, { undone:true }) : e; });
+    pushLog('undo', entry.target, 'Undid: ' + entry.summary, after, before);
   }
-  return { fds:fds, accounts:accounts };
+  return { fds:fds, accounts:accounts, log: annotateLog(log), _rawLog: log };
 }
 
 /* ===================================================================== *
@@ -627,7 +738,7 @@ function demoMutate(data, body){
  *  outside a browser (unit tests).
  * ===================================================================== */
 const FDPrefs = (function(){
-  const AUTH = 'fd_auth', THEME = 'fd_theme';
+  const AUTH = 'fd_auth', THEME = 'fd_theme', DEVICE = 'fd_device';
   const HALF_YEAR = 15552000; /* seconds */
 
   function readCookie(name){
@@ -645,6 +756,10 @@ const FDPrefs = (function(){
   function getAuth(){ return readCookie(AUTH); }
   function setAuth(pw){ writeCookie(AUTH, pw, HALF_YEAR); }
   function clearAuth(){ writeCookie(AUTH, '', 0); }
+
+  /* optional device label ("Dad's phone") shown in the change log */
+  function getDevice(){ return readCookie(DEVICE); }
+  function setDevice(name){ writeCookie(DEVICE, String(name || '').trim().substring(0, 40), HALF_YEAR * 2); }
 
   function systemPrefersDark(){
     try {
@@ -666,6 +781,7 @@ const FDPrefs = (function(){
   function setTheme(t){ writeCookie(THEME, t, HALF_YEAR * 2); applyTheme(t); }
 
   return { getAuth:getAuth, setAuth:setAuth, clearAuth:clearAuth,
+    getDevice:getDevice, setDevice:setDevice,
     getTheme:getTheme, setTheme:setTheme, applyTheme:applyTheme };
 })();
 
@@ -764,9 +880,10 @@ function searchMatch(hay, q){
 /* ============================== login ============================== */
 function Login({ onLogin, busy, error }){
   const [pw, setPw] = useState('');
+  const [dev, setDev] = useState(function(){ return FDPrefs.getDevice(); });
   return (
     <div className="login-wrap">
-      <form className="login-card" onSubmit={function(e){ e.preventDefault(); onLogin(pw); }}>
+      <form className="login-card" onSubmit={function(e){ e.preventDefault(); onLogin(pw, dev); }}>
         <div className="login-mark" aria-hidden="true">₹</div>
         <h1>Family FD Tracker</h1>
         <p className="login-sub">Fixed deposits across the family, in one ledger.</p>
@@ -778,6 +895,9 @@ function Login({ onLogin, busy, error }){
         <label htmlFor="pw">Family password</label>
         <input id="pw" type="password" autoFocus autoComplete="current-password"
                value={pw} onChange={function(e){ setPw(e.target.value); }} />
+        <label htmlFor="dev">Device name <span className="muted" style={{ fontWeight:500 }}>(optional — shows in the change log)</span></label>
+        <input id="dev" type="text" placeholder="e.g. Dad's phone" autoComplete="off"
+               value={dev} onChange={function(e){ setDev(e.target.value); }} />
         {error && <p className="login-err" role="alert">{error}</p>}
         <button type="submit" className="btn primary" disabled={busy}>
           {busy ? 'Checking…' : 'Open the ledger'}
@@ -912,7 +1032,51 @@ function Breakdown({ title, rows }){
   );
 }
 
-function Dashboard({ fds, onEdit }){
+/* ============================== recent changes ============================== */
+function fmtStamp(s){
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}:\d{2})/.exec(String(s || ''));
+  if (!m) return String(s || '');
+  const iso = m[1] + '-' + m[2] + '-' + m[3];
+  if (iso === M.todayISO()) return 'Today ' + m[4];
+  return M.fmtDate(iso).replace(/\s\d{4}$/, '') + ', ' + m[4];
+}
+
+function logPill(action){
+  if (action === 'create' || action === 'accountCreate') return <span className="pill green log-pill">added</span>;
+  if (action === 'update' || action === 'accountUpdate') return <span className="pill amber log-pill">edited</span>;
+  if (action === 'delete' || action === 'accountDelete') return <span className="pill red log-pill">deleted</span>;
+  return <span className="pill gray log-pill">undid</span>;
+}
+
+function RecentChanges({ log, onUndo }){
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <div className="panel-title">Recent changes</div>
+        <div className="panel-sub">Every add, edit and delete. The latest change to an item can be undone — full history lives in the sheet's “Log” tab.</div>
+      </div>
+      {(!log || log.length === 0) && (
+        <div className="panel-empty">No changes recorded yet — they'll show up here as the family edits.</div>
+      )}
+      {(log || []).map(function(e){
+        return (
+          <div key={e.id} className="log-row">
+            {logPill(e.action)}
+            <span className="log-main">
+              <span className="log-sum">{e.summary}</span>
+              <span className="log-meta">{fmtStamp(e.time)}{e.device ? ' · ' + e.device : ''}{e.undone ? ' · undone' : ''}</span>
+            </span>
+            {e.canUndo ? (
+              <button type="button" className="link-btn" onClick={function(){ onUndo(e); }}>Undo</button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Dashboard({ fds, log, onEdit, onUndo }){
   const shown = fds.filter(isOnDashboard);
   function group(keyFn, subFn){
     const map = {};
@@ -930,6 +1094,7 @@ function Dashboard({ fds, onEdit }){
     <div>
       <StatCards fds={fds} shown={shown} />
       <MaturingSoon shown={shown} onEdit={onEdit} />
+      <RecentChanges log={log} onUndo={onUndo} />
       <div className="grid-2">
         <Breakdown title="By person" rows={group(function(f){ return f.person; })} />
         <Breakdown title="By account" rows={group(function(f){ return f.account; }, function(f){ return f.person; })} />
@@ -1648,7 +1813,7 @@ function App(){
     (async function(){
       try {
         const j = await postApi({ action:'list', password: pw });
-        setData({ fds: j.fds, accounts: j.accounts });
+        setData({ fds: j.fds, accounts: j.accounts, log: j.log || [] });
         setAuth({ password: pw });
       } catch (e) {
         if (e.message === 'unauthorized'){
@@ -1672,11 +1837,12 @@ function App(){
     FDPrefs.setTheme(next);
   }
 
-  async function login(pw){
+  async function login(pw, deviceName){
     setLoginErr('');
     if (!pw){ setLoginErr('Enter the family password.'); return; }
     if (!LIVE){
       FDPrefs.setAuth(pw);
+      FDPrefs.setDevice(deviceName || '');
       setData(demoSeed());
       setAuth({ password: pw });
       return;
@@ -1685,7 +1851,8 @@ function App(){
     try {
       const j = await postApi({ action:'list', password: pw });
       FDPrefs.setAuth(pw); /* remember on this device until Sign out */
-      setData({ fds: j.fds, accounts: j.accounts });
+      FDPrefs.setDevice(deviceName || '');
+      setData({ fds: j.fds, accounts: j.accounts, log: j.log || [] });
       setAuth({ password: pw });
     } catch (e) {
       setLoginErr(e.message === 'unauthorized' ? 'Wrong password — try again.' : 'Could not open the ledger: ' + e.message);
@@ -1706,11 +1873,12 @@ function App(){
   async function mutate(body){
     setBusy(true);
     try {
+      const fullBody = Object.assign({}, body, { device: FDPrefs.getDevice() });
       if (LIVE){
-        const j = await postApi(Object.assign({}, body, { password: auth.password }));
-        setData({ fds: j.fds, accounts: j.accounts });
+        const j = await postApi(Object.assign({}, fullBody, { password: auth.password }));
+        setData({ fds: j.fds, accounts: j.accounts, log: j.log || [] });
       } else {
-        setData(demoMutate(data, body)); /* throws on guard violations, like the backend */
+        setData(demoMutate(data, fullBody)); /* throws on guard violations, like the backend */
       }
       return true;
     } catch (e) {
@@ -1800,13 +1968,27 @@ function App(){
     });
   }
 
+  function handleUndo(entry){
+    setConfirm({
+      title: 'Undo this change?',
+      lines: [
+        entry.summary,
+        fmtStamp(entry.time) + (entry.device ? ' · ' + entry.device : ''),
+        'Restores the previous values.'
+      ],
+      confirmLabel: 'Yes, undo',
+      danger: false,
+      run: function(){ return mutate({ action:'undo', logId: entry.id }); }
+    });
+  }
+
   /* Background reload from the sheet; never blocks the UI, announces itself. */
   async function refresh(){
     if (!LIVE || refreshing) return;
     setRefreshing(true);
     try {
       const j = await postApi({ action:'list', password: auth.password });
-      setData({ fds: j.fds, accounts: j.accounts });
+      setData({ fds: j.fds, accounts: j.accounts, log: j.log || [] });
       notifyOk('Refreshed');
     } catch (e) {
       notifyError('Refresh failed: ' + e.message);
@@ -1888,7 +2070,7 @@ function App(){
       )}
 
       <main>
-        {tab === 'dashboard' && <Dashboard fds={joined} onEdit={function(f){ setEditing(f); }} />}
+        {tab === 'dashboard' && <Dashboard fds={joined} log={data.log || []} onEdit={function(f){ setEditing(f); }} onUndo={handleUndo} />}
         {tab === 'all' && <AllFDs fds={joined} accounts={data.accounts} onEdit={function(f){ setEditing(f); }} onDelete={handleDelete} />}
         {tab === 'accounts' && <AccountsView accounts={data.accounts} fds={joined}
                 onAdd={function(){ setAccEditing('new'); }}

@@ -19,6 +19,12 @@
 
 var FD_SHEET = 'FDs';
 var ACCOUNTS_SHEET = 'Accounts';
+// Auto-created change log. Don't edit it by hand: the Before/After JSON
+// columns are what make Undo work.
+var LOG_SHEET = 'Log';
+var LOG_HEADERS = ['Id', 'Time', 'Device', 'Action', 'Target', 'Summary', 'Before', 'After', 'Undone'];
+// Optional device name sent with each mutation ("Dad's phone"); set per request.
+var CURRENT_DEVICE = '';
 
 // Canonical field order used when talking JSON to the frontend.
 var FD_FIELDS = ['id', 'account', 'accountNumber', 'startDate', 'endDate',
@@ -86,6 +92,8 @@ function doPost(e) {
       return jsonOut({ ok: false, error: 'unauthorized' });
     }
 
+    CURRENT_DEVICE = String(req.device || '').trim().substring(0, 40);
+
     var action = String(req.action || '');
     if (action === 'list') {
       // fall through: every action returns the full fresh state
@@ -103,6 +111,8 @@ function doPost(e) {
       accountUpdate(req.account || {}, req.originalName);
     } else if (action === 'accountDelete') {
       accountDelete(req.name);
+    } else if (action === 'undo') {
+      undoLog(req.logId);
     } else {
       return jsonOut({ ok: false, error: 'unknown action: ' + action });
     }
@@ -111,7 +121,7 @@ function doPost(e) {
     // this, the read in the same request can still see pre-change data
     // (classic Apps Script behaviour, most visible after deleteRow).
     SpreadsheetApp.flush();
-    return jsonOut({ ok: true, fds: readFds(), accounts: readAccounts() });
+    return jsonOut({ ok: true, fds: readFds(), accounts: readAccounts(), log: readLog(15) });
   } catch (err) {
     return jsonOut({ ok: false, error: String(err && err.message ? err.message : err) });
   } finally {
@@ -284,29 +294,62 @@ function nextId(fds) {
   return max + 1;
 }
 
-function createFd(fd) {
+function findFdById(id) {
+  var fds = readFds();
+  var want = toNumber(id);
+  for (var i = 0; i < fds.length; i++) {
+    if (fds[i].id === want) return fds[i];
+  }
+  return null;
+}
+
+/* Raw row operations (no logging) — used by the wired mutations and by undo. */
+function insertFdRow(fd) {
   var sheet = getSheet(FD_SHEET);
   var map = headerMap(sheet);
-  fd.id = nextId(readFds());
-  var row = fdToRow(applyDefaults(fd), map, sheet.getLastColumn());
+  var row = fdToRow(fd, map, sheet.getLastColumn());
   writeFdRow(sheet, map, sheet.getLastRow() + 1, row);
 }
 
-function updateFd(fd) {
+function rawUpdateFd(fd) {
   var sheet = getSheet(FD_SHEET);
   var map = headerMap(sheet);
   var rowIndex = findRowById(sheet, map, fd.id);
   if (!rowIndex) throw new Error('FD with id ' + fd.id + ' not found');
-  var row = fdToRow(applyDefaults(fd), map, sheet.getLastColumn());
-  writeFdRow(sheet, map, rowIndex, row);
+  writeFdRow(sheet, map, rowIndex, fdToRow(fd, map, sheet.getLastColumn()));
 }
 
-function deleteFd(id) {
+function rawDeleteFd(id) {
   var sheet = getSheet(FD_SHEET);
   var map = headerMap(sheet);
   var rowIndex = findRowById(sheet, map, id);
   if (!rowIndex) throw new Error('FD with id ' + id + ' not found');
   sheet.deleteRow(rowIndex);
+}
+
+function createFd(fd) {
+  fd = applyDefaults(fd);
+  fd.id = nextId(readFds());
+  insertFdRow(fd);
+  appendLog('create', 'fd:' + fd.id,
+    'Added FD #' + fd.id + ' · ' + fd.account + moneyBit(fd), null, pickFd(fd));
+}
+
+function updateFd(fd) {
+  fd = applyDefaults(fd);
+  var before = findFdById(fd.id);
+  if (!before) throw new Error('FD with id ' + fd.id + ' not found');
+  rawUpdateFd(fd);
+  appendLog('update', 'fd:' + before.id,
+    'Edited FD #' + before.id + ' · ' + fd.account, before, pickFd(fd));
+}
+
+function deleteFd(id) {
+  var before = findFdById(id);
+  if (!before) throw new Error('FD with id ' + id + ' not found');
+  rawDeleteFd(id);
+  appendLog('delete', 'fd:' + before.id,
+    'Deleted FD #' + before.id + ' · ' + before.account + moneyBit(before), before, null);
 }
 
 function findRowById(sheet, map, id) {
@@ -338,6 +381,28 @@ function upsertAccount(acc) {
   var map = headerMap(sheet);
   if (findAccountRow(sheet, map, name)) return;
   appendAccountRow(sheet, map, acc);
+  appendLog('accountCreate', accountTarget(name), 'Added account "' + name + '"', null, pickAccount(acc));
+}
+
+function accountTarget(name) {
+  return 'account:' + String(name || '').trim().toLowerCase();
+}
+
+function pickAccount(acc) {
+  return {
+    name: String(acc.name || '').trim(),
+    person: String(acc.person || '').trim(),
+    bank: String(acc.bank || '').trim()
+  };
+}
+
+function findAccountByName(name) {
+  var want = String(name || '').trim().toLowerCase();
+  var accounts = readAccounts();
+  for (var i = 0; i < accounts.length; i++) {
+    if (accounts[i].name.toLowerCase() === want) return accounts[i];
+  }
+  return null;
 }
 
 /** 1-based row index of the account with this name (case-insensitive), or 0. */
@@ -377,9 +442,21 @@ function accountCreate(acc) {
     throw new Error('an account named "' + name + '" already exists');
   }
   appendAccountRow(sheet, map, acc);
+  appendLog('accountCreate', accountTarget(name), 'Added account "' + name + '"', null, pickAccount(acc));
 }
 
 function accountUpdate(acc, originalName) {
+  var before = findAccountByName(originalName);
+  if (!before) throw new Error('account "' + originalName + '" not found');
+  rawAccountUpdate(acc, originalName);
+  var after = pickAccount(acc);
+  var summary = before.name !== after.name
+    ? 'Renamed account "' + before.name + '" → "' + after.name + '"'
+    : 'Edited account "' + after.name + '"';
+  appendLog('accountUpdate', accountTarget(after.name), summary, before, after);
+}
+
+function rawAccountUpdate(acc, originalName) {
   var orig = String(originalName || '').trim();
   var name = String(acc.name || '').trim();
   if (!name) throw new Error('account name is required');
@@ -417,6 +494,13 @@ function renameFdAccounts(oldName, newName) {
 }
 
 function accountDelete(name) {
+  var before = findAccountByName(name);
+  if (!before) throw new Error('account "' + name + '" not found');
+  rawAccountDelete(name);
+  appendLog('accountDelete', accountTarget(before.name), 'Deleted account "' + before.name + '"', before, null);
+}
+
+function rawAccountDelete(name) {
   var want = String(name || '').trim().toLowerCase();
   if (!want) throw new Error('missing account name');
   var fds = readFds();
@@ -432,4 +516,143 @@ function accountDelete(name) {
   var rowIndex = findAccountRow(sheet, map, name);
   if (!rowIndex) throw new Error('account "' + name + '" not found');
   sheet.deleteRow(rowIndex);
+}
+
+// ---------------------------------------------------------------- change log
+
+function ensureLogSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(LOG_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(LOG_SHEET);
+    sheet.getRange(1, 1, 1, LOG_HEADERS.length).setValues([LOG_HEADERS]);
+  }
+  return sheet;
+}
+
+function moneyBit(fd) {
+  return fd.principal ? ' · ' + inr(fd.principal) : '';
+}
+
+function inr(n) {
+  try {
+    return '₹' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  } catch (e) {
+    return '₹' + n;
+  }
+}
+
+function pickFd(fd) {
+  var out = {};
+  for (var i = 0; i < FD_FIELDS.length; i++) {
+    var k = FD_FIELDS[i];
+    out[k] = fd[k] === undefined ? '' : fd[k];
+  }
+  return out;
+}
+
+/** Append one change to the Log tab. Must never make the actual save fail. */
+function appendLog(action, target, summary, before, after) {
+  try {
+    var sheet = ensureLogSheet();
+    var lastRow = sheet.getLastRow();
+    var id = lastRow >= 2 ? toNumber(sheet.getRange(lastRow, 1).getValue()) + 1 : 1;
+    var tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+    var time = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm');
+    sheet.getRange(lastRow + 1, 2).setNumberFormat('@'); // keep Time as plain text
+    sheet.getRange(lastRow + 1, 1, 1, LOG_HEADERS.length).setValues([[
+      id, time, CURRENT_DEVICE, action, target, summary,
+      before ? JSON.stringify(before) : '', after ? JSON.stringify(after) : '', false
+    ]]);
+  } catch (err) {
+    // logging is best-effort by design
+  }
+}
+
+/** Newest-first recent entries with canUndo computed: an entry is undoable
+ *  only while it is the latest change to its target (never clobber a newer
+ *  edit), is not an undo itself, and has not already been undone. */
+function readLog(limit) {
+  var sheet;
+  try { sheet = ensureLogSheet(); } catch (e) { return []; }
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var n = Math.min(lastRow - 1, 50);
+  var tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+  var values = sheet.getRange(lastRow - n + 1, 1, n, LOG_HEADERS.length).getValues();
+  var entries = [];
+  for (var r = values.length - 1; r >= 0; r--) { // newest first
+    var v = values[r];
+    entries.push({
+      id: toNumber(v[0]),
+      time: v[1] instanceof Date ? Utilities.formatDate(v[1], tz, 'yyyy-MM-dd HH:mm') : String(v[1] || ''),
+      device: String(v[2] == null ? '' : v[2]),
+      action: String(v[3] || ''),
+      target: String(v[4] || ''),
+      summary: String(v[5] || ''),
+      undone: toBool(v[8])
+    });
+  }
+  for (var i = 0; i < entries.length; i++) {
+    var e = entries[i];
+    var blocked = e.undone || e.action === 'undo';
+    for (var j = 0; j < i && !blocked; j++) { // entries[j] are newer
+      if (entries[j].target === e.target) blocked = true;
+    }
+    e.canUndo = !blocked;
+  }
+  return entries.slice(0, limit || 15);
+}
+
+/** Revert one logged change using its stored Before/After images. */
+function undoLog(logId) {
+  var sheet = ensureLogSheet();
+  var lastRow = sheet.getLastRow();
+  var want = toNumber(logId);
+  if (!want || lastRow < 2) throw new Error('log entry not found');
+  var values = sheet.getRange(2, 1, lastRow - 1, LOG_HEADERS.length).getValues();
+  var idx = -1;
+  for (var r = 0; r < values.length; r++) {
+    if (toNumber(values[r][0]) === want) { idx = r; break; }
+  }
+  if (idx < 0) throw new Error('log entry ' + logId + ' not found');
+  var action = String(values[idx][3] || '');
+  var target = String(values[idx][4] || '');
+  var summary = String(values[idx][5] || '');
+  if (toBool(values[idx][8])) throw new Error('this change was already undone');
+  if (action === 'undo') throw new Error('an undo cannot be undone');
+  for (var r2 = idx + 1; r2 < values.length; r2++) {
+    if (String(values[r2][4] || '') === target) {
+      throw new Error('cannot undo: this item was changed again afterwards');
+    }
+  }
+  var before = null, after = null;
+  try {
+    before = values[idx][6] ? JSON.parse(String(values[idx][6])) : null;
+    after = values[idx][7] ? JSON.parse(String(values[idx][7])) : null;
+  } catch (e) {
+    throw new Error('log entry is unreadable');
+  }
+
+  if (action === 'create') {
+    rawDeleteFd(after.id);
+  } else if (action === 'update') {
+    rawUpdateFd(before);
+  } else if (action === 'delete') {
+    if (findFdById(before.id)) throw new Error('cannot undo: FD id ' + before.id + ' exists again');
+    insertFdRow(before);
+  } else if (action === 'accountCreate') {
+    rawAccountDelete(after.name); // refuses if FDs were attached meanwhile
+  } else if (action === 'accountUpdate') {
+    rawAccountUpdate(before, after.name); // rename cascades back to the FDs
+  } else if (action === 'accountDelete') {
+    var s = getSheet(ACCOUNTS_SHEET);
+    if (findAccountByName(before.name)) throw new Error('cannot undo: account "' + before.name + '" exists again');
+    appendAccountRow(s, headerMap(s), before);
+  } else {
+    throw new Error('cannot undo action: ' + action);
+  }
+
+  sheet.getRange(idx + 2, 9).setValue(true); // Undone column
+  appendLog('undo', target, 'Undid: ' + summary, after, before);
 }
