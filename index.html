@@ -144,6 +144,10 @@
   .mini-table th.num, .mini-table td.num{ text-align:right; }
   .mini-table td{ padding:9px 18px; border-bottom:1px solid var(--line-2); font-size:14px; vertical-align:top; }
   .mini-table tr:last-child td{ border-bottom:0; }
+  /* mini-tables live inside .panel (overflow:hidden); this wrapper lets them
+     scroll sideways on a phone instead of being clipped */
+  .mini-scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .mini-table.wide{ min-width:520px; }
   .share-name{ font-weight:650; }
   .share-track{ margin-top:5px; height:4px; border-radius:2px; background:var(--line-2); max-width:150px; }
   .share-bar{ height:4px; border-radius:2px; background:var(--accent); opacity:.8; }
@@ -835,6 +839,7 @@ function Breakdown({ title, rows }){
     <div className="panel">
       <div className="panel-head"><div className="panel-title">{title}</div></div>
       {rows.length === 0 ? <div className="panel-empty">Nothing to show.</div> : (
+       <div className="mini-scroll">
         <table className="mini-table">
           <thead>
             <tr><th>{title === 'By person' ? 'Person' : 'Account'}</th><th className="num">FDs</th><th className="num">Principal</th><th className="num">Maturity</th></tr>
@@ -856,6 +861,7 @@ function Breakdown({ title, rows }){
             })}
           </tbody>
         </table>
+       </div>
       )}
     </div>
   );
@@ -1105,7 +1111,8 @@ function AccountsView({ accounts, fds, onAdd, onEdit, onDelete }){
       {rows.length === 0 ? (
         <div className="panel-empty">No accounts yet — add the first one.</div>
       ) : (
-        <table className="mini-table">
+       <div className="mini-scroll">
+        <table className="mini-table wide">
           <thead>
             <tr><th>Account</th><th>Person</th><th>Bank</th><th className="num">FDs</th><th className="num">Principal</th><th aria-label="Actions"></th></tr>
           </thead>
@@ -1131,6 +1138,7 @@ function AccountsView({ accounts, fds, onAdd, onEdit, onDelete }){
             })}
           </tbody>
         </table>
+       </div>
       )}
     </div>
   );
