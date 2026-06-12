@@ -1,0 +1,1358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Family FD Tracker</title>
+<style>
+  :root{
+    --bg:#EAEEEC; --surface:#FFFFFF; --surface-2:#F4F7F5;
+    --ink:#14302B; --muted:#5F726E; --line:#D7DFDB; --line-2:#E7EDEA;
+    --accent:#0E6E55; --accent-ink:#0A4A3A; --accent-soft:#E0EFE9;
+    --amber:#A86207; --amber-soft:#FAEFD9;
+    --red:#A93A36;  --red-soft:#F7E3E1;
+    --radius:14px;
+    --shadow:0 1px 2px rgba(20,48,43,.05), 0 10px 30px rgba(20,48,43,.07);
+    --font:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{ background:var(--bg); color:var(--ink); font:15px/1.5 var(--font); -webkit-font-smoothing:antialiased; }
+  button{ font:inherit; color:inherit; cursor:pointer; }
+  input,select{ font:inherit; color:inherit; }
+  :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{ animation:none !important; transition:none !important; }
+  }
+
+  /* every numeric / monetary cell lines up like a passbook */
+  .num{ font-variant-numeric:tabular-nums; text-align:right; white-space:nowrap; }
+  .muted{ color:var(--muted); }
+  .small{ font-size:12.5px; }
+  .accent{ color:var(--accent-ink); }
+
+  .btn{ border:1px solid var(--line); background:var(--surface); border-radius:9px;
+        padding:7px 14px; font-weight:600; font-size:14px; transition:background .15s, border-color .15s; }
+  .btn:hover{ background:var(--surface-2); }
+  .btn.primary{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  .btn.primary:hover{ background:var(--accent-ink); }
+  .btn.danger-ghost{ color:var(--red); border-color:transparent; background:transparent; padding:4px 8px; }
+  .btn.danger-ghost:hover{ background:var(--red-soft); }
+  .btn.ghost{ border-color:transparent; background:transparent; }
+  .btn.ghost:hover{ background:var(--surface-2); }
+  .btn:disabled{ opacity:.55; cursor:default; }
+
+  .pill{ display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:650; white-space:nowrap; }
+  .pill.green{ background:var(--accent-soft); color:var(--accent-ink); }
+  .pill.amber{ background:var(--amber-soft); color:var(--amber); }
+  .pill.red{ background:var(--red-soft); color:var(--red); }
+  .pill.gray{ background:#ECEFEE; color:var(--muted); }
+
+  .auto-badge{ display:inline-block; vertical-align:1px; margin-left:7px; padding:1px 6px; border-radius:5px;
+    font-size:10px; font-weight:700; letter-spacing:.6px; text-transform:uppercase;
+    background:var(--accent-soft); color:var(--accent-ink); }
+
+  /* ---------- login ---------- */
+  .login-wrap{ min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+  .login-card{ background:var(--surface); border:1px solid var(--line-2); border-radius:var(--radius);
+    box-shadow:var(--shadow); padding:34px 32px; width:100%; max-width:400px; }
+  .login-mark{ width:44px; height:44px; border-radius:12px; background:var(--accent); color:#fff;
+    font-size:22px; font-weight:700; display:flex; align-items:center; justify-content:center; margin-bottom:14px; }
+  .login-card h1{ margin:0 0 4px; font-size:21px; }
+  .login-sub{ margin:0 0 18px; color:var(--muted); font-size:14px; }
+  .login-demo{ background:var(--amber-soft); color:var(--amber); border-radius:9px; padding:9px 12px;
+    font-size:13px; margin:0 0 16px; }
+  .login-card label{ display:block; font-size:13px; font-weight:650; margin-bottom:6px; }
+  .login-card input{ width:100%; border:1px solid var(--line); border-radius:9px; padding:9px 12px; margin-bottom:12px; background:var(--surface); }
+  .login-err{ color:var(--red); font-size:13.5px; margin:0 0 12px; }
+  .login-card .btn{ width:100%; padding:10px 14px; }
+
+  /* ---------- shell ---------- */
+  .app{ max-width:1180px; margin:0 auto; padding:18px 20px 64px; }
+  .topbar{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:6px 2px 16px; }
+  .brand{ display:flex; align-items:center; gap:11px; margin-right:2px; }
+  .brand-mark{ width:38px; height:38px; border-radius:10px; background:var(--accent); color:#fff;
+    font-size:19px; font-weight:700; display:flex; align-items:center; justify-content:center; flex:none; }
+  .brand-title{ font-size:16.5px; font-weight:700; line-height:1.2; }
+  .brand-sub{ font-size:12.5px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .mode-badge{ font-size:10.5px; font-weight:800; letter-spacing:1px; border-radius:6px; padding:3px 8px; }
+  .mode-badge.demo{ background:var(--amber-soft); color:var(--amber); }
+  .mode-badge.live{ background:var(--accent-soft); color:var(--accent-ink); }
+  .tabs{ display:flex; background:var(--surface-2); border:1px solid var(--line-2); border-radius:10px; padding:3px; gap:2px; }
+  .tab-btn{ border:0; background:transparent; border-radius:8px; padding:6px 14px; font-weight:650; font-size:14px; color:var(--muted); }
+  .tab-btn.on{ background:var(--surface); color:var(--ink); box-shadow:0 1px 2px rgba(20,48,43,.08); }
+  .topbar-actions{ margin-left:auto; display:flex; gap:8px; align-items:center; }
+
+  .demo-banner{ background:var(--amber-soft); color:var(--amber); border-radius:10px;
+    padding:9px 14px; font-size:13.5px; margin-bottom:16px; }
+
+  /* ---------- dashboard ---------- */
+  .cards{ display:grid; grid-template-columns:repeat(auto-fit, minmax(195px, 1fr)); gap:14px; margin-bottom:18px; }
+  .card{ background:var(--surface); border:1px solid var(--line-2); border-radius:var(--radius);
+    box-shadow:var(--shadow); padding:16px 18px 14px; }
+  .card-label{ font-size:12px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:var(--muted); margin-bottom:7px; }
+  .card-value{ font-size:23px; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .card-value.accent{ color:var(--accent-ink); }
+  .card-sub{ font-size:12.5px; color:var(--muted); margin-top:4px; font-variant-numeric:tabular-nums; }
+
+  .panel{ background:var(--surface); border:1px solid var(--line-2); border-radius:var(--radius);
+    box-shadow:var(--shadow); margin-bottom:18px; overflow:hidden; }
+  .panel-head{ padding:14px 18px 12px; border-bottom:1px solid var(--line-2); }
+  .panel-title{ font-size:15px; font-weight:700; }
+  .panel-sub{ font-size:12.5px; color:var(--muted); }
+  .panel-empty{ padding:22px 18px; color:var(--muted); font-size:14px; }
+
+  .soon-row{ display:flex; align-items:center; gap:14px; width:100%; text-align:left; border:0;
+    background:transparent; padding:12px 18px; border-bottom:1px solid var(--line-2); }
+  .soon-row:last-child{ border-bottom:0; }
+  .soon-row:hover{ background:var(--surface-2); }
+  .soon-pill{ flex:none; min-width:118px; text-align:center; }
+  .soon-main{ flex:1 1 auto; min-width:0; }
+  .soon-acct{ display:block; font-weight:650; font-size:14.5px; }
+  .soon-meta{ display:block; font-size:12.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .soon-amts{ flex:none; }
+  .soon-mat{ display:block; font-weight:700; font-variant-numeric:tabular-nums; }
+  .soon-pr{ display:block; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+
+  .grid-2{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  @media (max-width: 820px){ .grid-2{ grid-template-columns:1fr; } }
+
+  table{ border-collapse:collapse; width:100%; }
+  .mini-table th{ font-size:11.5px; font-weight:700; letter-spacing:.4px; text-transform:uppercase;
+    color:var(--muted); text-align:left; padding:9px 18px; border-bottom:1px solid var(--line-2); background:var(--surface-2); }
+  .mini-table th.num, .mini-table td.num{ text-align:right; }
+  .mini-table td{ padding:9px 18px; border-bottom:1px solid var(--line-2); font-size:14px; vertical-align:top; }
+  .mini-table tr:last-child td{ border-bottom:0; }
+  .share-name{ font-weight:650; }
+  .share-track{ margin-top:5px; height:4px; border-radius:2px; background:var(--line-2); max-width:150px; }
+  .share-bar{ height:4px; border-radius:2px; background:var(--accent); opacity:.8; }
+
+  /* ---------- all-FDs table ---------- */
+  .filters{ display:flex; flex-wrap:wrap; gap:9px; align-items:center; padding:14px 16px; border-bottom:1px solid var(--line-2); }
+  .filters select, .filters input{ border:1px solid var(--line); border-radius:8px; padding:6px 9px; background:var(--surface); font-size:13.5px; max-width:170px; }
+  .filters input[type="search"]{ flex:1 1 150px; min-width:130px; max-width:260px; }
+  .filters .spacer{ margin-left:auto; }
+  .table-scroll{ overflow:auto; max-height:calc(100vh - 230px); }
+  .fd-table th{ position:sticky; top:0; z-index:2; background:var(--surface-2); font-size:11.5px; font-weight:700;
+    letter-spacing:.4px; text-transform:uppercase; color:var(--muted); text-align:left; padding:9px 12px;
+    border-bottom:1px solid var(--line); white-space:nowrap; }
+  .fd-table th.num{ text-align:right; }
+  .fd-table td{ padding:9px 12px; border-bottom:1px solid var(--line-2); font-size:13.5px; vertical-align:top; background:var(--surface); }
+  .fd-table tbody tr:hover td{ background:var(--surface-2); }
+  .fd-table tfoot td{ position:sticky; bottom:0; z-index:2; background:var(--surface); border-top:2px solid var(--line);
+    border-bottom:0; font-weight:700; font-size:13.5px; }
+  .cell-main{ font-weight:600; white-space:nowrap; }
+  .cell-sub{ font-size:11.5px; color:var(--muted); white-space:nowrap; }
+  .fdno{ display:inline-block; max-width:11ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-variant-numeric:tabular-nums; vertical-align:bottom; }
+  .remarks-cell{ max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
+  .date-cell{ white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .date-red{ color:var(--red); font-weight:650; }
+  .date-amber{ color:var(--amber); font-weight:650; }
+  .row-actions{ white-space:nowrap; }
+
+  /* ---------- modal / form ---------- */
+  .overlay{ position:fixed; inset:0; background:rgba(20,48,43,.45); display:flex; align-items:flex-start;
+    justify-content:center; padding:4vh 14px 14px; z-index:50; overflow:auto; }
+  .modal{ background:var(--surface); border-radius:var(--radius); box-shadow:var(--shadow);
+    width:100%; max-width:700px; }
+  .modal-head{ display:flex; align-items:center; justify-content:space-between; padding:16px 22px 0; }
+  .modal-head h2{ margin:0; font-size:18px; }
+  .modal-body{ padding:6px 22px 4px; }
+  .modal-foot{ display:flex; justify-content:flex-end; gap:9px; padding:14px 22px 20px; }
+  .frm-section{ border-top:1px solid var(--line-2); margin-top:14px; padding-top:12px; }
+  .frm-section:first-child{ border-top:0; margin-top:4px; }
+  .frm-section-title{ font-size:11.5px; font-weight:800; letter-spacing:.7px; text-transform:uppercase; color:var(--muted); margin-bottom:10px; }
+  .frm-row{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:11px; }
+  .frm-row.three{ grid-template-columns:1fr 1fr 1fr; }
+  @media (max-width: 620px){ .frm-row, .frm-row.three{ grid-template-columns:1fr; } }
+  .field label{ display:block; font-size:12.5px; font-weight:650; margin-bottom:5px; }
+  .field input, .field select{ width:100%; border:1px solid var(--line); border-radius:8px; padding:8px 10px; background:var(--surface); }
+  .field input.num-in{ font-variant-numeric:tabular-nums; text-align:right; }
+  .ten-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:7px; }
+  .ten-grid .ten-cell{ position:relative; }
+  .ten-cell input{ width:100%; border:1px solid var(--line); border-radius:8px; padding:8px 26px 8px 10px;
+    font-variant-numeric:tabular-nums; text-align:right; }
+  .ten-unit{ position:absolute; right:9px; top:50%; transform:translateY(-50%); font-size:12px; color:var(--muted); pointer-events:none; }
+  .seg{ display:inline-flex; background:var(--surface-2); border:1px solid var(--line-2); border-radius:9px; padding:3px; gap:2px; }
+  .seg-btn{ border:0; background:transparent; border-radius:7px; padding:6px 13px; font-weight:650; font-size:13.5px; color:var(--muted); }
+  .seg-btn.on{ background:var(--surface); color:var(--ink); box-shadow:0 1px 2px rgba(20,48,43,.08); }
+  .readout{ background:var(--surface-2); border-radius:9px; padding:8px 12px; font-size:13.5px;
+    font-variant-numeric:tabular-nums; margin-bottom:11px; display:flex; gap:18px; flex-wrap:wrap; }
+  .readout b{ font-weight:700; }
+  .link-btn{ border:0; background:transparent; color:var(--accent-ink); font-weight:650; font-size:13.5px;
+    padding:2px 0; text-decoration:underline; text-underline-offset:3px; }
+  .frm-err{ background:var(--red-soft); color:var(--red); border-radius:9px; padding:9px 12px; font-size:13.5px; margin-bottom:10px; }
+  .check-row{ display:flex; align-items:center; gap:9px; font-size:14px; padding-top:4px; }
+  .check-row input{ width:17px; height:17px; accent-color:var(--accent); }
+
+  .toast{ position:fixed; left:50%; bottom:22px; transform:translateX(-50%); z-index:90;
+    background:var(--ink); color:#fff; border-radius:11px; padding:11px 16px; font-size:14px;
+    box-shadow:var(--shadow); display:flex; gap:14px; align-items:center; max-width:90vw; }
+  .toast button{ border:0; background:transparent; color:#fff; font-size:16px; padding:0; }
+
+  @media (max-width: 700px){
+    .app{ padding:12px 12px 56px; }
+    .topbar-actions{ margin-left:0; width:100%; justify-content:flex-end; }
+    .card-value{ font-size:20px; }
+    .soon-pill{ min-width:96px; }
+    .table-scroll{ max-height:none; }
+  }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.4/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+/* ===================================================================== *
+ *  CONFIG
+ *  Leave APPS_SCRIPT_URL empty to run in DEMO mode (sample data, nothing
+ *  is saved). Paste your Google Apps Script /exec URL to go LIVE — see
+ *  SETUP.md for the one-time deployment steps.
+ * ===================================================================== */
+const APPS_SCRIPT_URL = "";
+
+/* ===================================================================== *
+ *  FDMath — date arithmetic, interest math, formatting, and the
+ *  "any 2 of 3" auto-calculation engine used by the add/edit form.
+ *  Plain JS (no JSX) so it can be unit-tested outside the browser.
+ * ===================================================================== */
+const FDMath = (function(){
+  const MS_DAY = 86400000;
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const pad2 = function(n){ return String(n).length < 2 ? '0' + n : String(n); };
+
+  function parseISO(s){
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s == null ? '' : s).trim());
+    if (!m) return null;
+    const p = { y:+m[1], mo:+m[2], d:+m[3] };
+    if (p.mo < 1 || p.mo > 12 || p.d < 1 || p.d > daysInMonth(p.y, p.mo)) return null;
+    return p;
+  }
+  function toISO(p){ return p.y + '-' + pad2(p.mo) + '-' + pad2(p.d); }
+  function toUTC(p){ return Date.UTC(p.y, p.mo - 1, p.d); }
+  function daysInMonth(y, mo){ return new Date(Date.UTC(y, mo, 0)).getUTCDate(); }
+  function todayISO(){
+    const t = new Date();
+    return t.getFullYear() + '-' + pad2(t.getMonth() + 1) + '-' + pad2(t.getDate());
+  }
+
+  /* whole days between two ISO dates (b - a) */
+  function diffDays(aISO, bISO){
+    const a = parseISO(aISO), b = parseISO(bISO);
+    if (!a || !b) return null;
+    return Math.round((toUTC(b) - toUTC(a)) / MS_DAY);
+  }
+
+  /* calendar difference a -> b as {y, m, d} (years, then months, then days, with borrow) */
+  function diffYMD(aISO, bISO){
+    const a = parseISO(aISO), b = parseISO(bISO);
+    if (!a || !b || toUTC(b) < toUTC(a)) return null;
+    let y = b.y - a.y, m = b.mo - a.mo, d = b.d - a.d;
+    let cy = b.y, cmo = b.mo;
+    while (d < 0){
+      cmo -= 1; if (cmo < 1){ cmo = 12; cy -= 1; }
+      d += daysInMonth(cy, cmo);
+      m -= 1;
+    }
+    while (m < 0){ m += 12; y -= 1; }
+    return { y:y, m:m, d:d };
+  }
+
+  /* startISO + {y,m,d}: add years+months (day clamped to month length), then days */
+  function addYMD(startISO, t){
+    const a = parseISO(startISO);
+    if (!a) return null;
+    const months = a.y * 12 + (a.mo - 1) + (t.y * 12 + t.m);
+    const y = Math.floor(months / 12), mo = (months % 12) + 1;
+    const d = Math.min(a.d, daysInMonth(y, mo));
+    const nd = new Date(Date.UTC(y, mo - 1, d) + t.d * MS_DAY);
+    return toISO({ y:nd.getUTCFullYear(), mo:nd.getUTCMonth() + 1, d:nd.getUTCDate() });
+  }
+
+  /* endISO - {y,m,d}: subtract days, then months+years (day clamped) — inverse of addYMD */
+  function subYMD(endISO, t){
+    const b = parseISO(endISO);
+    if (!b) return null;
+    const d0 = new Date(toUTC(b) - t.d * MS_DAY);
+    const months = d0.getUTCFullYear() * 12 + d0.getUTCMonth() - (t.y * 12 + t.m);
+    const y = Math.floor(months / 12), mo = (months % 12) + 1;
+    const d = Math.min(d0.getUTCDate(), daysInMonth(y, mo));
+    return toISO({ y:y, mo:mo, d:d });
+  }
+
+  /* ---------------- interest math (t in years = days/365) ---------------- */
+  const FREQ = { quarterly:4, monthly:12, 'half-yearly':2, annually:1 };
+
+  function maturityOf(P, r, tDays, compounding){
+    if (!(P > 0) || !(tDays > 0) || !(r >= 0)) return null;
+    const t = tDays / 365;
+    if (compounding === 'simple') return P * (1 + (r * t) / 100);
+    const n = FREQ[compounding] || 4;
+    return P * Math.pow(1 + r / (100 * n), n * t);
+  }
+  function rateOf(P, M, tDays, compounding){
+    if (!(P > 0) || !(M > 0) || !(tDays > 0)) return null;
+    const t = tDays / 365;
+    if (compounding === 'simple') return ((M / P - 1) / t) * 100;
+    const n = FREQ[compounding] || 4;
+    return n * (Math.pow(M / P, 1 / (n * t)) - 1) * 100;
+  }
+  function principalOf(M, r, tDays, compounding){
+    if (!(M > 0) || !(tDays > 0) || !(r >= 0)) return null;
+    const t = tDays / 365;
+    if (compounding === 'simple') return M / (1 + (r * t) / 100);
+    const n = FREQ[compounding] || 4;
+    return M / Math.pow(1 + r / (100 * n), n * t);
+  }
+  function round2(x){ return Math.round(x * 100) / 100; }
+
+  /* ---------------- formatting (Indian conventions) ---------------- */
+  function fmtINR(n){
+    if (n === '' || n === null || n === undefined || isNaN(Number(n))) return '—';
+    return '₹' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  }
+  function fmtDate(iso){
+    const p = parseISO(iso);
+    if (!p) return iso ? String(iso) : '—';
+    return pad2(p.d) + ' ' + MONTHS[p.mo - 1] + ' ' + p.y;
+  }
+  function fmtRate(r){
+    if (r === '' || r === null || r === undefined || isNaN(Number(r))) return '—';
+    return Number(r) + '%';
+  }
+  function tenureLabel(t){
+    if (!t) return '—';
+    const parts = [];
+    if (t.y) parts.push(t.y + 'y');
+    if (t.m) parts.push(t.m + 'm');
+    if (t.d || parts.length === 0) parts.push(t.d + 'd');
+    return parts.join(' ');
+  }
+
+  /* =====================================================================
+   *  Form auto-calc engine.
+   *
+   *  The form keeps raw strings plus a `pins` map. A field is PINNED when
+   *  the user typed a value into it (or it came from a stored FD). Auto-
+   *  calc fills only un-pinned fields and never overwrites a pinned one.
+   *  Two groups, each "any 2 of 3 fills the 3rd":
+   *    dates: { start, end, tenure }      money: { rate, principal, maturity }
+   *  Money needs the tenure (in days) to be known.
+   * ===================================================================== */
+  function emptyForm(){
+    return { account:'', accountNumber:'', start:'', end:'', ty:'', tm:'', td:'',
+      rate:'', principal:'', maturity:'', interestOnMaturity:true,
+      compounding:'quarterly', status:'Active', showInDashboard:true, remarks:'' };
+  }
+
+  /* Build form state from a stored FD. Stored values are pinned (real data,
+   * never overwritten); the tenure display is derived from the dates and
+   * left un-pinned so it follows date edits. */
+  function formFromFd(fd){
+    const f = emptyForm();
+    f.account = fd.account || '';
+    f.accountNumber = fd.accountNumber || '';
+    f.start = fd.startDate || '';
+    f.end = fd.endDate || '';
+    f.rate = fd.rate ? String(fd.rate) : '';
+    f.principal = fd.principal ? String(fd.principal) : '';
+    f.maturity = fd.maturity ? String(fd.maturity) : '';
+    f.interestOnMaturity = fd.interestOnMaturity !== false;
+    f.compounding = fd.compounding || 'quarterly';
+    f.status = fd.status || 'Active';
+    f.showInDashboard = fd.showInDashboard !== false;
+    f.remarks = fd.remarks || '';
+    const t = (parseISO(f.start) && parseISO(f.end)) ? diffYMD(f.start, f.end) : null;
+    if (t){ f.ty = String(t.y); f.tm = String(t.m); f.td = String(t.d); }
+    else if (fd.tenureDays > 0){ f.td = String(fd.tenureDays); }
+    const pins = {
+      start: !!f.start, end: !!f.end,
+      tenure: !t && fd.tenureDays > 0,
+      rate: f.rate !== '', principal: f.principal !== '', maturity: f.maturity !== ''
+    };
+    return { f:f, pins:pins };
+  }
+
+  function tenureEntered(v){ return v.ty !== '' || v.tm !== '' || v.td !== ''; }
+  function tenureOf(v){
+    return { y: parseInt(v.ty, 10) || 0, m: parseInt(v.tm, 10) || 0, d: parseInt(v.td, 10) || 0 };
+  }
+  function formDays(v){
+    return (parseISO(v.start) && parseISO(v.end)) ? diffDays(v.start, v.end) : null;
+  }
+
+  /* Pure: takes form values + pins, returns new values with un-pinned
+   * fields filled in (or cleared when their inputs are no longer known). */
+  function solveForm(f, pins){
+    const v = Object.assign({}, f);
+    const num = function(x){ const n = parseFloat(x); return isNaN(n) ? null : n; };
+
+    /* ----- dates: {start, end, tenure} ----- */
+    const sp = pins.start && !!parseISO(v.start);
+    const ep = pins.end && !!parseISO(v.end);
+    const tp = pins.tenure && tenureEntered(v);
+    if (sp && ep){
+      if (!pins.tenure){
+        const t = diffYMD(v.start, v.end);
+        if (t){ v.ty = String(t.y); v.tm = String(t.m); v.td = String(t.d); }
+        else { v.ty = ''; v.tm = ''; v.td = ''; }
+      }
+    } else if (sp && tp){
+      if (!pins.end) v.end = addYMD(v.start, tenureOf(v)) || '';
+    } else if (ep && tp){
+      if (!pins.start) v.start = subYMD(v.end, tenureOf(v)) || '';
+    } else {
+      if (!pins.start) v.start = '';
+      if (!pins.end) v.end = '';
+      if (!pins.tenure){ v.ty = ''; v.tm = ''; v.td = ''; }
+    }
+
+    /* ----- money: {rate, principal, maturity} (needs tenure in days) ----- */
+    const tDays = formDays(v);
+    const can = tDays !== null && tDays > 0;
+    if (!v.interestOnMaturity){
+      /* periodic payout: interest is paid out along the way, maturity mirrors principal */
+      if (!pins.maturity) v.maturity = v.principal;
+    } else {
+      const rp = pins.rate && v.rate !== '';
+      const pp = pins.principal && v.principal !== '';
+      const mp = pins.maturity && v.maturity !== '';
+      const pinnedCount = (rp ? 1 : 0) + (pp ? 1 : 0) + (mp ? 1 : 0);
+      if (pinnedCount < 2 || (!can && pinnedCount < 3)){
+        if (!pins.rate) v.rate = '';
+        if (!pins.principal) v.principal = '';
+        if (!pins.maturity) v.maturity = '';
+      } else if (can && rp && pp && !pins.maturity){
+        const m = maturityOf(num(v.principal), num(v.rate), tDays, v.compounding);
+        v.maturity = m === null ? '' : String(round2(m));
+      } else if (can && pp && mp && !pins.rate){
+        const r = rateOf(num(v.principal), num(v.maturity), tDays, v.compounding);
+        v.rate = r === null ? '' : String(round2(r));
+      } else if (can && rp && mp && !pins.principal){
+        const p = principalOf(num(v.maturity), num(v.rate), tDays, v.compounding);
+        v.principal = p === null ? '' : String(round2(p));
+      }
+    }
+    return v;
+  }
+
+  return { parseISO:parseISO, toISO:toISO, todayISO:todayISO, daysInMonth:daysInMonth,
+    diffDays:diffDays, diffYMD:diffYMD, addYMD:addYMD, subYMD:subYMD,
+    maturityOf:maturityOf, rateOf:rateOf, principalOf:principalOf, round2:round2,
+    fmtINR:fmtINR, fmtDate:fmtDate, fmtRate:fmtRate, tenureLabel:tenureLabel,
+    emptyForm:emptyForm, formFromFd:formFromFd, solveForm:solveForm,
+    tenureEntered:tenureEntered, tenureOf:tenureOf, formDays:formDays };
+})();
+
+/* ===================================================================== *
+ *  Demo data (only used when APPS_SCRIPT_URL is empty). Dates are relative
+ *  to "today" so the dashboard always looks alive. All figures fictional.
+ * ===================================================================== */
+function demoSeed(){
+  const today = FDMath.todayISO();
+  const shift = function(days){ return FDMath.addYMD(today, { y:0, m:0, d:days }); };
+  function mk(id, account, accountNumber, startOff, endOff, rate, principal, opts){
+    opts = opts || {};
+    const startDate = shift(startOff), endDate = shift(endOff);
+    const tenureDays = FDMath.diffDays(startDate, endDate);
+    const interestOnMaturity = opts.interestOnMaturity !== false;
+    const compounding = opts.compounding || 'quarterly';
+    const maturity = interestOnMaturity
+      ? Math.round(FDMath.maturityOf(principal, rate, tenureDays, compounding))
+      : principal;
+    return { id:id, account:account, accountNumber:accountNumber, startDate:startDate,
+      endDate:endDate, tenureDays:tenureDays, rate:rate, principal:principal, maturity:maturity,
+      interestOnMaturity:interestOnMaturity, compounding:compounding,
+      status:opts.status || 'Active', showInDashboard:opts.showInDashboard !== false,
+      remarks:opts.remarks || '' };
+  }
+  return {
+    accounts: [
+      { name:'DAD HDFC', person:'Dad', bank:'HDFC' },
+      { name:'MOM SBI', person:'Mom', bank:'SBI' },
+      { name:'RICHIE POST OFFICE', person:'Richie', bank:'Post Office' },
+      { name:'Stable Money', person:'Richie', bank:'Stable Money' }
+    ],
+    fds: [
+      mk(1, 'DAD HDFC', '50300011112222', -500, 47, 7.25, 200000),
+      mk(2, 'DAD HDFC', '50300033334444', -300, 247, 7.1, 50000),
+      mk(3, 'MOM SBI', '44591111222', -385, -20, 6.8, 150000, { remarks:'Renewal due' }),
+      mk(4, 'MOM SBI', '44593333444', -100, 265, 7.6, 300000,
+         { interestOnMaturity:false, remarks:'Quarterly interest to savings a/c' }),
+      mk(5, 'RICHIE POST OFFICE', 'NA', -200, 1626, 7.5, 100000, { remarks:'5-year time deposit' }),
+      mk(6, 'Stable Money', '000140459999111', -265, 100, 8.6, 25000, { remarks:'Suryoday SF Bank' }),
+      mk(7, 'DAD HDFC', '50300055556666', -800, -230, 7, 100000,
+         { status:'Inactive', remarks:'Matured — reinvested' }),
+      mk(8, 'RICHIE POST OFFICE', 'nsc 20150001111', -50, 1776, 7.7, 150000,
+         { showInDashboard:false, remarks:'NSC — tracked separately' })
+    ]
+  };
+}
+
+/* Demo-mode CRUD: mirrors what Code.gs does server-side. */
+function demoMutate(data, body){
+  let fds = data.fds.slice();
+  let accounts = data.accounts.slice();
+  const na = body.newAccount;
+  if (na && na.name && String(na.name).trim()){
+    const name = String(na.name).trim();
+    const exists = accounts.some(function(a){ return a.name.toLowerCase() === name.toLowerCase(); });
+    if (!exists) accounts = accounts.concat([{ name:name, person:na.person || '', bank:na.bank || '' }]);
+  }
+  if (body.action === 'create'){
+    const id = fds.reduce(function(m, f){ return Math.max(m, f.id || 0); }, 0) + 1;
+    fds = fds.concat([Object.assign({}, body.fd, { id:id })]);
+  } else if (body.action === 'update'){
+    fds = fds.map(function(f){ return f.id === body.fd.id ? Object.assign({}, f, body.fd) : f; });
+  } else if (body.action === 'delete'){
+    fds = fds.filter(function(f){ return f.id !== body.id; });
+  }
+  return { fds:fds, accounts:accounts };
+}
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useEffect, useRef } = React;
+const M = FDMath;
+const LIVE = !!APPS_SCRIPT_URL;
+
+/* POST to Apps Script. text/plain keeps it a "simple" CORS request (no
+ * preflight, which Apps Script cannot answer). */
+async function postApi(body){
+  let res;
+  try {
+    res = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(body)
+    });
+  } catch (e) {
+    throw new Error('network error — are you online?');
+  }
+  let json;
+  try { json = await res.json(); }
+  catch (e) { throw new Error('unexpected reply from Apps Script (HTTP ' + res.status + ')'); }
+  if (!json.ok) throw new Error(json.error || 'unknown error');
+  return json;
+}
+
+function daysFromToday(iso){
+  const d = M.diffDays(M.todayISO(), iso);
+  return d === null ? null : d;
+}
+
+function interestOf(fd){
+  return (fd.maturity > 0) ? fd.maturity - fd.principal : null;
+}
+
+function tenureCellOf(fd){
+  if (M.parseISO(fd.startDate) && M.parseISO(fd.endDate)){
+    return { label: M.tenureLabel(M.diffYMD(fd.startDate, fd.endDate)), days: M.diffDays(fd.startDate, fd.endDate) };
+  }
+  if (fd.tenureDays > 0) return { label: fd.tenureDays + 'd', days: fd.tenureDays };
+  return { label: '—', days: null };
+}
+
+/* ============================== login ============================== */
+function Login({ onLogin, busy, error }){
+  const [pw, setPw] = useState('');
+  return (
+    <div className="login-wrap">
+      <form className="login-card" onSubmit={function(e){ e.preventDefault(); onLogin(pw); }}>
+        <div className="login-mark" aria-hidden="true">₹</div>
+        <h1>Family FD Tracker</h1>
+        <p className="login-sub">Fixed deposits across the family, in one ledger.</p>
+        {!LIVE && (
+          <p className="login-demo">
+            Demo mode — enter any password. The data is a sample and resets on refresh.
+          </p>
+        )}
+        <label htmlFor="pw">Family password</label>
+        <input id="pw" type="password" autoFocus autoComplete="current-password"
+               value={pw} onChange={function(e){ setPw(e.target.value); }} />
+        {error && <p className="login-err" role="alert">{error}</p>}
+        <button type="submit" className="btn primary" disabled={busy}>
+          {busy ? 'Checking…' : 'Open the ledger'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+/* ============================== dashboard ============================== */
+function StatCards({ shown }){
+  const active = shown.filter(function(f){ return f.status === 'Active'; }).length;
+  const inactive = shown.length - active;
+  const tp = shown.reduce(function(s, f){ return s + (Number(f.principal) || 0); }, 0);
+  const tm = shown.reduce(function(s, f){ return s + (Number(f.maturity) || 0); }, 0);
+  const accounts = {};
+  shown.forEach(function(f){ accounts[f.account] = true; });
+  const nAcc = Object.keys(accounts).length;
+  return (
+    <div className="cards">
+      <div className="card">
+        <div className="card-label">Deposits in view</div>
+        <div className="card-value">{shown.length}</div>
+        <div className="card-sub">{active} active · {inactive} inactive</div>
+      </div>
+      <div className="card">
+        <div className="card-label">Total principal</div>
+        <div className="card-value">{M.fmtINR(tp)}</div>
+        <div className="card-sub">across {nAcc} account{nAcc === 1 ? '' : 's'}</div>
+      </div>
+      <div className="card">
+        <div className="card-label">Total at maturity</div>
+        <div className="card-value">{M.fmtINR(tm)}</div>
+        <div className="card-sub">{tp > 0 ? '+' + ((tm / tp - 1) * 100).toFixed(1) + '% over principal' : ' '}</div>
+      </div>
+      <div className="card">
+        <div className="card-label">Interest to earn</div>
+        <div className="card-value accent">{M.fmtINR(tm - tp)}</div>
+        <div className="card-sub">maturity − principal</div>
+      </div>
+    </div>
+  );
+}
+
+function soonPill(days){
+  if (days < 0) return <span className="pill red soon-pill">matured {-days}d ago</span>;
+  if (days === 0) return <span className="pill amber soon-pill">matures today</span>;
+  if (days <= 30) return <span className="pill amber soon-pill">in {days}d</span>;
+  return <span className="pill green soon-pill">in {days}d</span>;
+}
+
+function MaturingSoon({ shown, onEdit }){
+  const rows = shown
+    .filter(function(f){ return f.status === 'Active' && M.parseISO(f.endDate); })
+    .map(function(f){ return { fd: f, days: daysFromToday(f.endDate) }; })
+    .filter(function(x){ return x.days <= 120; })
+    .sort(function(a, b){ return a.days - b.days; });
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <div className="panel-title">Maturing soon</div>
+        <div className="panel-sub">Active deposits ending within 120 days, including overdue</div>
+      </div>
+      {rows.length === 0 && (
+        <div className="panel-empty">Nothing matures in the next 120 days. Sit back and let the interest build.</div>
+      )}
+      {rows.map(function(x){
+        const f = x.fd, t = tenureCellOf(f);
+        return (
+          <button type="button" key={f.id} className="soon-row" onClick={function(){ onEdit(f); }}>
+            {soonPill(x.days)}
+            <span className="soon-main">
+              <span className="soon-acct">{f.account}{f.remarks ? <span className="muted small"> · {f.remarks}</span> : null}</span>
+              <span className="soon-meta">ends {M.fmtDate(f.endDate)} · {M.fmtRate(f.rate)} · {t.label}</span>
+            </span>
+            <span className="soon-amts num">
+              <span className="soon-mat">{M.fmtINR(f.maturity)}</span>
+              <span className="soon-pr">on {M.fmtINR(f.principal)}</span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Breakdown({ title, rows }){
+  const max = rows.reduce(function(m, r){ return Math.max(m, r.principal); }, 0);
+  return (
+    <div className="panel">
+      <div className="panel-head"><div className="panel-title">{title}</div></div>
+      {rows.length === 0 ? <div className="panel-empty">Nothing to show.</div> : (
+        <table className="mini-table">
+          <thead>
+            <tr><th>{title === 'By person' ? 'Person' : 'Account'}</th><th className="num">FDs</th><th className="num">Principal</th><th className="num">Maturity</th></tr>
+          </thead>
+          <tbody>
+            {rows.map(function(r){
+              return (
+                <tr key={r.key}>
+                  <td>
+                    <div className="share-name">{r.key}</div>
+                    {r.sub ? <div className="cell-sub">{r.sub}</div> : null}
+                    <div className="share-track"><div className="share-bar" style={{ width: (max > 0 ? (r.principal / max) * 100 : 0) + '%' }} /></div>
+                  </td>
+                  <td className="num">{r.count}</td>
+                  <td className="num">{M.fmtINR(r.principal)}</td>
+                  <td className="num">{M.fmtINR(r.maturity)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function Dashboard({ fds, onEdit }){
+  const shown = fds.filter(function(f){ return f.showInDashboard; });
+  function group(keyFn, subFn){
+    const map = {};
+    shown.forEach(function(f){
+      const k = keyFn(f) || '—';
+      if (!map[k]) map[k] = { key:k, sub: subFn ? subFn(f) : '', count:0, principal:0, maturity:0 };
+      map[k].count += 1;
+      map[k].principal += Number(f.principal) || 0;
+      map[k].maturity += Number(f.maturity) || 0;
+    });
+    return Object.keys(map).map(function(k){ return map[k]; })
+      .sort(function(a, b){ return b.principal - a.principal; });
+  }
+  return (
+    <div>
+      <StatCards shown={shown} />
+      <MaturingSoon shown={shown} onEdit={onEdit} />
+      <div className="grid-2">
+        <Breakdown title="By person" rows={group(function(f){ return f.person; })} />
+        <Breakdown title="By account" rows={group(function(f){ return f.account; }, function(f){ return f.person; })} />
+      </div>
+    </div>
+  );
+}
+
+/* ============================== all FDs table ============================== */
+function exportCSV(rows){
+  const head = ['ID','Account','Person','Bank','FD Account Number','Start Date','End Date',
+    'Tenure (Days)','Interest %','Principal','Maturity','Interest','Payout','Compounding',
+    'Status','Show In Dashboard','Remarks'];
+  const esc = function(v){
+    const s = String(v === null || v === undefined ? '' : v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const lines = [head.map(esc).join(',')];
+  rows.forEach(function(f){
+    const i = interestOf(f);
+    lines.push([f.id, f.account, f.person, f.bank, f.accountNumber, f.startDate, f.endDate,
+      f.tenureDays || '', f.rate || '', f.principal || '', f.maturity || '',
+      i === null ? '' : M.round2(i), f.interestOnMaturity ? 'On maturity' : 'Periodic',
+      f.compounding, f.status, f.showInDashboard ? 'TRUE' : 'FALSE', f.remarks].map(esc).join(','));
+  });
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'fd-export-' + M.todayISO() + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+}
+
+const SORTS = {
+  'end-asc':       { label: 'Maturity: soonest first' },
+  'end-desc':      { label: 'Maturity: latest first' },
+  'start-desc':    { label: 'Start date: newest first' },
+  'principal-desc':{ label: 'Principal: high → low' },
+  'rate-desc':     { label: 'Rate: high → low' }
+};
+
+function AllFDs({ fds, accounts, onEdit, onDelete }){
+  const [person, setPerson] = useState('all');
+  const [account, setAccount] = useState('all');
+  const [status, setStatus] = useState('all');
+  const [dash, setDash] = useState('all');
+  const [q, setQ] = useState('');
+  const [sort, setSort] = useState('end-asc');
+
+  const persons = useMemo(function(){
+    const seen = {};
+    accounts.forEach(function(a){ if (a.person) seen[a.person] = true; });
+    return Object.keys(seen).sort();
+  }, [accounts]);
+
+  const accountOptions = useMemo(function(){
+    return accounts
+      .filter(function(a){ return person === 'all' || a.person === person; })
+      .map(function(a){ return a.name; })
+      .sort();
+  }, [accounts, person]);
+
+  function pickPerson(p){
+    setPerson(p);
+    if (account !== 'all'){
+      const acc = accounts.find(function(a){ return a.name === account; });
+      if (p !== 'all' && (!acc || acc.person !== p)) setAccount('all');
+    }
+  }
+
+  const filtered = useMemo(function(){
+    const needle = q.trim().toLowerCase();
+    let rows = fds.filter(function(f){
+      if (person !== 'all' && f.person !== person) return false;
+      if (account !== 'all' && f.account !== account) return false;
+      if (status !== 'all' && f.status !== status) return false;
+      if (dash === 'shown' && !f.showInDashboard) return false;
+      if (dash === 'hidden' && f.showInDashboard) return false;
+      if (needle){
+        const hay = (String(f.accountNumber) + ' ' + f.bank + ' ' + f.remarks + ' ' + f.account).toLowerCase();
+        if (hay.indexOf(needle) < 0) return false;
+      }
+      return true;
+    });
+    const endKey = function(f){ const p = M.parseISO(f.endDate); return p ? Date.UTC(p.y, p.mo - 1, p.d) : null; };
+    const startKey = function(f){ const p = M.parseISO(f.startDate); return p ? Date.UTC(p.y, p.mo - 1, p.d) : null; };
+    const cmp = {
+      'end-asc': function(a, b){
+        const ka = endKey(a), kb = endKey(b);
+        return (ka === null ? Infinity : ka) - (kb === null ? Infinity : kb);
+      },
+      'end-desc': function(a, b){
+        const ka = endKey(a), kb = endKey(b);
+        return (kb === null ? -Infinity : kb) - (ka === null ? -Infinity : ka);
+      },
+      'start-desc': function(a, b){
+        const ka = startKey(a), kb = startKey(b);
+        return (kb === null ? -Infinity : kb) - (ka === null ? -Infinity : ka);
+      },
+      'principal-desc': function(a, b){ return (b.principal || 0) - (a.principal || 0); },
+      'rate-desc': function(a, b){ return (b.rate || 0) - (a.rate || 0); }
+    }[sort];
+    return rows.slice().sort(cmp);
+  }, [fds, person, account, status, dash, q, sort]);
+
+  const totP = filtered.reduce(function(s, f){ return s + (Number(f.principal) || 0); }, 0);
+  const totM = filtered.reduce(function(s, f){ return s + (Number(f.maturity) || 0); }, 0);
+
+  function endCls(f){
+    if (!M.parseISO(f.endDate)) return '';
+    const d = daysFromToday(f.endDate);
+    if (d < 0) return ' date-red';
+    if (d <= 30) return ' date-amber';
+    return '';
+  }
+
+  return (
+    <div className="panel">
+      <div className="filters">
+        <select aria-label="Filter by person" value={person} onChange={function(e){ pickPerson(e.target.value); }}>
+          <option value="all">Everyone</option>
+          {persons.map(function(p){ return <option key={p} value={p}>{p}</option>; })}
+        </select>
+        <select aria-label="Filter by account" value={account} onChange={function(e){ setAccount(e.target.value); }}>
+          <option value="all">All accounts</option>
+          {accountOptions.map(function(n){ return <option key={n} value={n}>{n}</option>; })}
+        </select>
+        <select aria-label="Filter by status" value={status} onChange={function(e){ setStatus(e.target.value); }}>
+          <option value="all">Any status</option>
+          <option value="Active">Active</option>
+          <option value="Inactive">Inactive</option>
+        </select>
+        <select aria-label="Filter by dashboard visibility" value={dash} onChange={function(e){ setDash(e.target.value); }}>
+          <option value="all">Dashboard: all</option>
+          <option value="shown">Shown</option>
+          <option value="hidden">Hidden</option>
+        </select>
+        <input type="search" placeholder="Search FD no. / bank / remarks" aria-label="Search"
+               value={q} onChange={function(e){ setQ(e.target.value); }} />
+        <span className="spacer" />
+        <select aria-label="Sort" value={sort} onChange={function(e){ setSort(e.target.value); }}>
+          {Object.keys(SORTS).map(function(k){ return <option key={k} value={k}>{SORTS[k].label}</option>; })}
+        </select>
+        <button type="button" className="btn" onClick={function(){ exportCSV(filtered); }}>Export CSV</button>
+      </div>
+      <div className="table-scroll">
+        <table className="fd-table">
+          <thead>
+            <tr>
+              <th>Account</th><th>FD No.</th><th>Start</th><th>End</th><th>Tenure</th>
+              <th className="num">Rate</th><th className="num">Principal</th><th className="num">Maturity</th>
+              <th className="num">Interest</th><th>Payout</th><th>Status</th><th>Dashboard</th>
+              <th>Remarks</th><th aria-label="Actions"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr><td colSpan={14} className="panel-empty">No deposits match these filters.</td></tr>
+            )}
+            {filtered.map(function(f){
+              const t = tenureCellOf(f);
+              const i = interestOf(f);
+              return (
+                <tr key={f.id}>
+                  <td><div className="cell-main">{f.account}</div><div className="cell-sub">{f.person}</div></td>
+                  <td><span className="fdno" title={String(f.accountNumber || '')}>{f.accountNumber || '—'}</span></td>
+                  <td className="date-cell">{M.fmtDate(f.startDate)}</td>
+                  <td className={'date-cell' + endCls(f)}>{M.fmtDate(f.endDate)}</td>
+                  <td><div className="cell-main">{t.label}</div><div className="cell-sub num" style={{ textAlign:'left' }}>{t.days !== null ? t.days + ' days' : ''}</div></td>
+                  <td className="num">{M.fmtRate(f.rate)}</td>
+                  <td className="num">{M.fmtINR(f.principal || '')}</td>
+                  <td className="num">{M.fmtINR(f.maturity || '')}</td>
+                  <td className="num">{i === null ? '—' : M.fmtINR(M.round2(i))}</td>
+                  <td><span className="small muted">{f.interestOnMaturity ? 'On maturity' : 'Periodic'}</span></td>
+                  <td><span className={'pill ' + (f.status === 'Active' ? 'green' : 'gray')}>{f.status}</span></td>
+                  <td><span className={'pill ' + (f.showInDashboard ? 'green' : 'gray')}>{f.showInDashboard ? 'Shown' : 'Hidden'}</span></td>
+                  <td className="remarks-cell" title={f.remarks || ''}>{f.remarks || ''}</td>
+                  <td className="row-actions">
+                    <button type="button" className="btn ghost small" onClick={function(){ onEdit(f); }}>Edit</button>
+                    <button type="button" className="btn danger-ghost" aria-label={'Delete FD ' + f.id}
+                            onClick={function(){ onDelete(f); }}>✕</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colSpan={6}>{filtered.length} of {fds.length} deposits</td>
+              <td className="num">{M.fmtINR(totP)}</td>
+              <td className="num">{M.fmtINR(totM)}</td>
+              <td className="num">{M.fmtINR(totM - totP)}</td>
+              <td colSpan={5}></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ============================== add / edit form ============================== */
+function Field({ id, label, auto, children }){
+  return (
+    <div className="field">
+      <label htmlFor={id}>{label}{auto ? <span className="auto-badge">auto</span> : null}</label>
+      {children}
+    </div>
+  );
+}
+
+function FdForm({ initial, accounts, busy, onCancel, onSave }){
+  const editing = !!initial;
+  const [st, setSt] = useState(function(){
+    if (!initial) return { f: M.emptyForm(), pins: {} };
+    const x = M.formFromFd(initial);
+    return { f: M.solveForm(x.f, x.pins), pins: x.pins };
+  });
+  const [newAcc, setNewAcc] = useState(null);
+  const [err, setErr] = useState('');
+  const f = st.f, pins = st.pins;
+
+  useEffect(function(){
+    function onKey(e){ if (e.key === 'Escape') onCancel(); }
+    document.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return function(){
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [onCancel]);
+
+  function pinKeyFor(name){
+    if (name === 'start' || name === 'end' || name === 'rate' || name === 'principal' || name === 'maturity') return name;
+    if (name === 'ty' || name === 'tm' || name === 'td') return 'tenure';
+    return null;
+  }
+
+  function setField(name, value){
+    setSt(function(prev){
+      const nf = Object.assign({}, prev.f);
+      nf[name] = value;
+      const np = Object.assign({}, prev.pins);
+      const pk = pinKeyFor(name);
+      if (pk === 'tenure') np.tenure = M.tenureEntered(nf);
+      else if (pk) np[pk] = value !== '';
+      if (name === 'interestOnMaturity') np.maturity = false; /* payout toggle un-pins maturity */
+      return { f: M.solveForm(nf, np), pins: np };
+    });
+  }
+
+  /* "↻ Recalculate" — un-pin maturity, treat rate+principal as the inputs */
+  function recalcMaturity(){
+    setSt(function(prev){
+      const np = Object.assign({}, prev.pins, {
+        maturity: false,
+        rate: prev.f.rate !== '',
+        principal: prev.f.principal !== ''
+      });
+      return { f: M.solveForm(Object.assign({}, prev.f), np), pins: np };
+    });
+  }
+
+  const isAuto = function(field, val){ return val !== '' && !pins[field]; };
+  const tDays = M.formDays(f);
+  const tenLbl = M.tenureEntered(f) ? M.tenureLabel(M.tenureOf(f)) : (tDays ? null : '—');
+  const liveTen = tenLbl !== null ? tenLbl : M.tenureLabel(M.diffYMD(f.start, f.end));
+  const P = parseFloat(f.principal), Mx = parseFloat(f.maturity);
+  const liveInterest = (!isNaN(P) && !isNaN(Mx)) ? Mx - P : null;
+
+  const persons = [];
+  accounts.forEach(function(a){ if (a.person && persons.indexOf(a.person) < 0) persons.push(a.person); });
+  const byPerson = {};
+  accounts.forEach(function(a){
+    const k = a.person || 'Other';
+    (byPerson[k] = byPerson[k] || []).push(a);
+  });
+
+  function submit(e){
+    e.preventDefault();
+    const account = newAcc ? String(newAcc.name || '').trim() : f.account;
+    if (!account){ setErr('Pick an account, or add a new one.'); return; }
+    if (M.parseISO(f.start) && M.parseISO(f.end) && M.diffDays(f.start, f.end) < 0){
+      setErr('The end date is before the start date.'); return;
+    }
+    const bad = ['rate', 'principal', 'maturity'].find(function(k){ return f[k] !== '' && isNaN(parseFloat(f[k])); });
+    if (bad){ setErr('“' + bad + '” must be a number.'); return; }
+    const fd = {
+      account: account,
+      accountNumber: String(f.accountNumber).trim(),
+      startDate: f.start, endDate: f.end,
+      tenureDays: tDays === null ? '' : tDays,
+      rate: f.rate === '' ? '' : parseFloat(f.rate),
+      principal: f.principal === '' ? '' : parseFloat(f.principal),
+      maturity: f.maturity === '' ? '' : parseFloat(f.maturity),
+      interestOnMaturity: f.interestOnMaturity,
+      compounding: f.compounding,
+      status: f.status,
+      showInDashboard: f.showInDashboard,
+      remarks: String(f.remarks).trim()
+    };
+    if (editing) fd.id = initial.id;
+    onSave(fd, newAcc ? {
+      name: account,
+      person: String(newAcc.person || '').trim(),
+      bank: String(newAcc.bank || '').trim()
+    } : null);
+  }
+
+  return (
+    <div className="overlay" onMouseDown={function(e){ if (e.target === e.currentTarget) onCancel(); }}>
+      <form className="modal" role="dialog" aria-modal="true" aria-label={editing ? 'Edit FD' : 'Add FD'} onSubmit={submit}>
+        <div className="modal-head">
+          <h2>{editing ? 'Edit FD #' + initial.id : 'Add a fixed deposit'}</h2>
+          <button type="button" className="btn ghost" aria-label="Close" onClick={onCancel}>✕</button>
+        </div>
+        <div className="modal-body">
+          {err && <div className="frm-err" role="alert">{err}</div>}
+
+          <div className="frm-section">
+            <div className="frm-section-title">Account</div>
+            {!newAcc ? (
+              <div className="frm-row">
+                <Field id="f-account" label="Account">
+                  <select id="f-account" value={f.account}
+                          onChange={function(e){
+                            if (e.target.value === '__new__'){ setNewAcc({ name:'', person:'', bank:'' }); }
+                            else setField('account', e.target.value);
+                          }}>
+                    <option value="">— choose —</option>
+                    {Object.keys(byPerson).sort().map(function(p){
+                      return (
+                        <optgroup key={p} label={p}>
+                          {byPerson[p].map(function(a){ return <option key={a.name} value={a.name}>{a.name}</option>; })}
+                        </optgroup>
+                      );
+                    })}
+                    <option value="__new__">＋ Add new account…</option>
+                  </select>
+                </Field>
+                <Field id="f-acctno" label="FD account number">
+                  <input id="f-acctno" type="text" value={f.accountNumber} placeholder="as printed on the receipt"
+                         onChange={function(e){ setField('accountNumber', e.target.value); }} />
+                </Field>
+              </div>
+            ) : (
+              <div>
+                <div className="frm-row three">
+                  <Field id="na-name" label="New account name">
+                    <input id="na-name" type="text" value={newAcc.name} placeholder="e.g. MOM HDFC" autoFocus
+                           onChange={function(e){ setNewAcc(Object.assign({}, newAcc, { name: e.target.value })); }} />
+                  </Field>
+                  <Field id="na-person" label="Person">
+                    <input id="na-person" type="text" list="persons-list" value={newAcc.person} placeholder="e.g. Mom"
+                           onChange={function(e){ setNewAcc(Object.assign({}, newAcc, { person: e.target.value })); }} />
+                    <datalist id="persons-list">
+                      {persons.map(function(p){ return <option key={p} value={p} />; })}
+                    </datalist>
+                  </Field>
+                  <Field id="na-bank" label="Bank">
+                    <input id="na-bank" type="text" value={newAcc.bank} placeholder="e.g. HDFC"
+                           onChange={function(e){ setNewAcc(Object.assign({}, newAcc, { bank: e.target.value })); }} />
+                  </Field>
+                </div>
+                <div className="frm-row">
+                  <div>
+                    <button type="button" className="link-btn" onClick={function(){ setNewAcc(null); }}>
+                      ← use an existing account instead
+                    </button>
+                  </div>
+                  <Field id="f-acctno2" label="FD account number">
+                    <input id="f-acctno2" type="text" value={f.accountNumber}
+                           onChange={function(e){ setField('accountNumber', e.target.value); }} />
+                  </Field>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="frm-section">
+            <div className="frm-section-title">Dates &amp; tenure — fill any two, the third is computed</div>
+            <div className="frm-row three">
+              <Field id="f-start" label="Start date" auto={isAuto('start', f.start)}>
+                <input id="f-start" type="date" value={f.start}
+                       onChange={function(e){ setField('start', e.target.value); }} />
+              </Field>
+              <Field id="f-end" label="End date" auto={isAuto('end', f.end)}>
+                <input id="f-end" type="date" value={f.end}
+                       onChange={function(e){ setField('end', e.target.value); }} />
+              </Field>
+              <Field id="f-ty" label="Tenure" auto={isAuto('tenure', M.tenureEntered(f) ? 'x' : '')}>
+                <div className="ten-grid">
+                  <span className="ten-cell">
+                    <input id="f-ty" aria-label="Tenure years" inputMode="numeric" value={f.ty}
+                           onChange={function(e){ setField('ty', e.target.value.replace(/[^0-9]/g, '')); }} />
+                    <span className="ten-unit">y</span>
+                  </span>
+                  <span className="ten-cell">
+                    <input aria-label="Tenure months" inputMode="numeric" value={f.tm}
+                           onChange={function(e){ setField('tm', e.target.value.replace(/[^0-9]/g, '')); }} />
+                    <span className="ten-unit">m</span>
+                  </span>
+                  <span className="ten-cell">
+                    <input aria-label="Tenure days" inputMode="numeric" value={f.td}
+                           onChange={function(e){ setField('td', e.target.value.replace(/[^0-9]/g, '')); }} />
+                    <span className="ten-unit">d</span>
+                  </span>
+                </div>
+              </Field>
+            </div>
+            <div className="readout">
+              <span>Tenure&nbsp;<b>{liveTen}</b>{tDays !== null ? <span className="muted"> · {tDays} days</span> : null}</span>
+            </div>
+          </div>
+
+          <div className="frm-section">
+            <div className="frm-section-title">Interest &amp; amounts — fill any two, the third is computed</div>
+            <div className="frm-row">
+              <div className="field">
+                <label>Interest payout</label>
+                <div className="seg" role="group" aria-label="Interest payout">
+                  <button type="button" className={'seg-btn' + (f.interestOnMaturity ? ' on' : '')}
+                          onClick={function(){ if (!f.interestOnMaturity) setField('interestOnMaturity', true); }}>
+                    On maturity
+                  </button>
+                  <button type="button" className={'seg-btn' + (!f.interestOnMaturity ? ' on' : '')}
+                          onClick={function(){ if (f.interestOnMaturity) setField('interestOnMaturity', false); }}>
+                    Periodic payout
+                  </button>
+                </div>
+              </div>
+              <Field id="f-comp" label="Compounding">
+                <select id="f-comp" value={f.compounding}
+                        onChange={function(e){ setField('compounding', e.target.value); }}>
+                  <option value="quarterly">Quarterly (most banks)</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="half-yearly">Half-yearly</option>
+                  <option value="annually">Annually</option>
+                  <option value="simple">Simple interest</option>
+                </select>
+              </Field>
+            </div>
+            <div className="frm-row three">
+              <Field id="f-rate" label="Interest % p.a." auto={isAuto('rate', f.rate)}>
+                <input id="f-rate" className="num-in" inputMode="decimal" value={f.rate} placeholder="7.1"
+                       onChange={function(e){ setField('rate', e.target.value); }} />
+              </Field>
+              <Field id="f-principal" label="Principal (₹)" auto={isAuto('principal', f.principal)}>
+                <input id="f-principal" className="num-in" inputMode="decimal" value={f.principal} placeholder="50000"
+                       onChange={function(e){ setField('principal', e.target.value); }} />
+              </Field>
+              <Field id="f-maturity" label="Maturity (₹)" auto={isAuto('maturity', f.maturity)}>
+                <input id="f-maturity" className="num-in" inputMode="decimal" value={f.maturity}
+                       onChange={function(e){ setField('maturity', e.target.value); }} />
+              </Field>
+            </div>
+            <div className="readout">
+              <span>Interest&nbsp;<b className="accent">{liveInterest === null ? '—' : M.fmtINR(M.round2(liveInterest))}</b><span className="muted"> (maturity − principal)</span></span>
+              {!f.interestOnMaturity ? <span className="muted">Periodic payout: maturity equals principal; the rate is informational.</span> : null}
+            </div>
+            <div style={{ marginBottom: 11 }}>
+              <button type="button" className="link-btn" onClick={recalcMaturity}>
+                ↻ Recalculate maturity from principal &amp; rate
+              </button>
+              <span className="muted small"> — use after correcting a rate; overrides the typed maturity</span>
+            </div>
+          </div>
+
+          <div className="frm-section">
+            <div className="frm-section-title">Status</div>
+            <div className="frm-row three">
+              <Field id="f-status" label="Status">
+                <select id="f-status" value={f.status} onChange={function(e){ setField('status', e.target.value); }}>
+                  <option value="Active">Active</option>
+                  <option value="Inactive">Inactive</option>
+                </select>
+              </Field>
+              <div className="field">
+                <label htmlFor="f-show">Dashboard</label>
+                <div className="check-row">
+                  <input id="f-show" type="checkbox" checked={f.showInDashboard}
+                         onChange={function(e){ setField('showInDashboard', e.target.checked); }} />
+                  <label htmlFor="f-show" style={{ margin:0, fontWeight:500 }}>Count in dashboard totals</label>
+                </div>
+              </div>
+              <Field id="f-remarks" label="Remarks">
+                <input id="f-remarks" type="text" value={f.remarks} placeholder="nominee, sub-bank, notes…"
+                       onChange={function(e){ setField('remarks', e.target.value); }} />
+              </Field>
+            </div>
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button type="button" className="btn" onClick={onCancel}>Cancel</button>
+          <button type="submit" className="btn primary" disabled={busy}>
+            {busy ? 'Saving…' : (editing ? 'Save changes' : 'Add FD')}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/* ============================== app shell ============================== */
+function App(){
+  const [auth, setAuth] = useState(null);
+  const [data, setData] = useState(null);
+  const [tab, setTab] = useState('dashboard');
+  const [editing, setEditing] = useState(null);   /* null | 'new' | fd */
+  const [busy, setBusy] = useState(false);
+  const [loginErr, setLoginErr] = useState('');
+  const [toast, setToast] = useState('');
+
+  useEffect(function(){
+    if (!toast) return;
+    const t = setTimeout(function(){ setToast(''); }, 6000);
+    return function(){ clearTimeout(t); };
+  }, [toast]);
+
+  async function login(pw){
+    setLoginErr('');
+    if (!pw){ setLoginErr('Enter the family password.'); return; }
+    if (!LIVE){
+      setData(demoSeed());
+      setAuth({ password: pw });
+      return;
+    }
+    setBusy(true);
+    try {
+      const j = await postApi({ action:'list', password: pw });
+      setData({ fds: j.fds, accounts: j.accounts });
+      setAuth({ password: pw });
+    } catch (e) {
+      setLoginErr(e.message === 'unauthorized' ? 'Wrong password — try again.' : 'Could not open the ledger: ' + e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function mutate(body){
+    setBusy(true);
+    try {
+      if (LIVE){
+        const j = await postApi(Object.assign({}, body, { password: auth.password }));
+        setData({ fds: j.fds, accounts: j.accounts });
+      } else {
+        setData(function(d){ return demoMutate(d, body); });
+      }
+      return true;
+    } catch (e) {
+      setToast(e.message === 'unauthorized' ? 'Session rejected — the password may have changed. Refresh and sign in again.' : 'Save failed: ' + e.message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSave(fd, newAccount){
+    const ok = await mutate({ action: fd.id ? 'update' : 'create', fd: fd, newAccount: newAccount });
+    if (ok) setEditing(null);
+  }
+
+  function handleDelete(fd){
+    const label = 'Delete FD' + (fd.accountNumber ? ' ' + fd.accountNumber : '') + ' under ' + fd.account +
+      (fd.principal ? ' (' + M.fmtINR(fd.principal) + ')' : '') + '?' +
+      (LIVE ? '\nThis removes the row from the Google Sheet.' : '');
+    if (window.confirm(label)) mutate({ action:'delete', id: fd.id });
+  }
+
+  async function sync(){
+    await mutate({ action:'list' });
+  }
+
+  if (!auth) return <Login onLogin={login} busy={busy} error={loginErr} />;
+
+  const accountsByName = {};
+  data.accounts.forEach(function(a){ accountsByName[a.name] = a; });
+  const joined = data.fds.map(function(f){
+    const a = accountsByName[f.account];
+    return Object.assign({}, f, { person: a ? a.person : '—', bank: a ? a.bank : '—' });
+  });
+  const shownCount = joined.filter(function(f){ return f.showInDashboard; }).length;
+
+  return (
+    <div className="app">
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">₹</span>
+          <div>
+            <div className="brand-title">Family FD Tracker</div>
+            <div className="brand-sub">{joined.length} deposits · {shownCount} on dashboard</div>
+          </div>
+        </div>
+        <span className={'mode-badge ' + (LIVE ? 'live' : 'demo')}>{LIVE ? 'LIVE' : 'DEMO'}</span>
+        <nav className="tabs" aria-label="Views">
+          <button type="button" className={'tab-btn' + (tab === 'dashboard' ? ' on' : '')}
+                  onClick={function(){ setTab('dashboard'); }}>Dashboard</button>
+          <button type="button" className={'tab-btn' + (tab === 'all' ? ' on' : '')}
+                  onClick={function(){ setTab('all'); }}>All FDs</button>
+        </nav>
+        <div className="topbar-actions">
+          {LIVE && (
+            <button type="button" className="btn" title="Reload from the Google Sheet" aria-label="Reload from the Google Sheet"
+                    onClick={sync} disabled={busy}>↻</button>
+          )}
+          <button type="button" className="btn primary" onClick={function(){ setEditing('new'); }}>＋ Add FD</button>
+        </div>
+      </header>
+
+      {!LIVE && (
+        <div className="demo-banner">
+          <b>Demo mode.</b> This is sample data — changes are not saved and reset on refresh.
+          Paste your Apps Script URL into <code>APPS_SCRIPT_URL</code> in <code>index.html</code> to go live (see SETUP.md).
+        </div>
+      )}
+
+      <main>
+        {tab === 'dashboard'
+          ? <Dashboard fds={joined} onEdit={function(f){ setEditing(f); }} />
+          : <AllFDs fds={joined} accounts={data.accounts} onEdit={function(f){ setEditing(f); }} onDelete={handleDelete} />}
+      </main>
+
+      {editing !== null && (
+        <FdForm initial={editing === 'new' ? null : editing}
+                accounts={data.accounts}
+                busy={busy}
+                onCancel={function(){ setEditing(null); }}
+                onSave={handleSave} />
+      )}
+
+      {toast && (
+        <div className="toast" role="alert">
+          <span>{toast}</span>
+          <button type="button" aria-label="Dismiss" onClick={function(){ setToast(''); }}>✕</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
