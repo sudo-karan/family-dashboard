@@ -112,7 +112,7 @@ function doPost(e) {
     } else if (action === 'accountDelete') {
       accountDelete(req.name);
     } else if (action === 'transferFds') {
-      transferFds(req.from, req.to);
+      transferFds(req.ids, req.to, req.from);
     } else if (action === 'undo') {
       undoLog(req.logId);
     } else {
@@ -502,25 +502,31 @@ function accountDelete(name) {
   appendLog('accountDelete', accountTarget(before.name), 'Deleted account "' + before.name + '"', before, null);
 }
 
-/** Move every FD from one account to another (reassign the `account` field). */
-function transferFds(from, to) {
-  from = String(from || '').trim();
+/** Move the chosen FDs (by id) onto another account — reassigns `account`. */
+function transferFds(ids, to, from) {
   to = String(to || '').trim();
-  if (!from || !to) throw new Error('choose both accounts');
-  if (from.toLowerCase() === to.toLowerCase()) throw new Error('pick a different destination account');
+  if (!to) throw new Error('choose a destination account');
   if (!findAccountByName(to)) throw new Error('account "' + to + '" not found');
+  if (!ids || !ids.length) throw new Error('select at least one FD to move');
+  var want = {};
+  for (var k = 0; k < ids.length; k++) want[toNumber(ids[k])] = true;
   var fds = readFds();
   var moved = [];
+  var srcSet = {};
   for (var i = 0; i < fds.length; i++) {
-    if (String(fds[i].account).trim().toLowerCase() === from.toLowerCase()) {
-      rawUpdateFd(applyDefaults(Object.assign({}, fds[i], { account: to })));
-      moved.push(fds[i].id);
+    var f = fds[i];
+    if (want[f.id] && String(f.account).trim().toLowerCase() !== to.toLowerCase()) {
+      srcSet[f.account] = true;
+      rawUpdateFd(applyDefaults(Object.assign({}, f, { account: to })));
+      moved.push(f.id);
     }
   }
-  if (moved.length === 0) throw new Error('"' + from + '" has no FDs to move');
-  var payload = { from: from, to: to, ids: moved };
-  appendLog('transfer', 'account:' + from.toLowerCase(),
-    'Moved ' + moved.length + ' FD' + (moved.length === 1 ? '' : 's') + ' from "' + from + '" to "' + to + '"',
+  if (moved.length === 0) throw new Error('nothing to move');
+  var srcKeys = Object.keys(srcSet);
+  var src = String(from || '').trim() || srcKeys.join(', ');
+  var payload = { from: src, to: to, ids: moved };
+  appendLog('transfer', 'account:' + String(srcKeys[0] || src).toLowerCase(),
+    'Moved ' + moved.length + ' FD' + (moved.length === 1 ? '' : 's') + ' from "' + src + '" to "' + to + '"',
     payload, payload);
 }
 

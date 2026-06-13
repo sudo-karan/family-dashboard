@@ -148,6 +148,16 @@
   /* read-only viewer: a disabled fieldset greys every control inside */
   .frm-fieldset{ border:0; margin:0; padding:0; min-width:0; }
   .readonly-note{ background:var(--surface-2); border-radius:9px; padding:8px 12px; font-size:12.5px; color:var(--muted); margin-bottom:6px; }
+  /* transfer FD checklist */
+  .tr-tools{ display:flex; gap:14px; align-items:center; margin:4px 2px 8px; }
+  .tr-list{ max-height:46vh; overflow:auto; border:1px solid var(--line-2); border-radius:9px; }
+  .tr-fd{ display:flex; gap:10px; align-items:flex-start; padding:9px 11px; border-bottom:1px solid var(--line-2); cursor:pointer; }
+  .tr-fd:last-child{ border-bottom:0; }
+  .tr-fd:hover{ background:var(--surface-2); }
+  .tr-fd input{ margin-top:3px; width:16px; height:16px; flex:none; accent-color:var(--accent); }
+  .tr-fd-main{ min-width:0; }
+  .tr-fd-top{ display:block; font-weight:600; font-size:13.5px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+  .tr-fd-sub{ display:block; overflow-wrap:anywhere; }
   select:disabled, button:disabled.seg-btn{ background:var(--surface-2); color:var(--muted); }
 
   .grid-2{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }
@@ -699,19 +709,22 @@ function demoMutate(data, body){
     accounts = accounts.filter(function(a){ return lower(a.name) !== lower(name); });
     if (before) pushLog('accountDelete', accountTarget(before.name), 'Deleted account “' + before.name + '”', before, null);
   } else if (body.action === 'transferFds'){
-    const from = String(body.from || '').trim(), to = String(body.to || '').trim();
-    if (!from || !to) throw new Error('choose both accounts');
-    if (lower(from) === lower(to)) throw new Error('pick a different destination account');
+    const to = String(body.to || '').trim();
+    if (!to) throw new Error('choose a destination account');
     if (!accounts.some(function(a){ return lower(a.name) === lower(to); })) throw new Error('account “' + to + '” not found');
-    const ids = [];
+    const wantIds = (body.ids || []).map(Number);
+    if (!wantIds.length) throw new Error('select at least one FD to move');
+    const want = {}; wantIds.forEach(function(id){ want[id] = true; });
+    const movedIds = []; const srcSet = {};
     fds = fds.map(function(f){
-      if (lower(f.account) === lower(from)){ ids.push(f.id); return Object.assign({}, f, { account: to }); }
+      if (want[f.id] && lower(f.account) !== lower(to)){ srcSet[f.account] = true; movedIds.push(f.id); return Object.assign({}, f, { account: to }); }
       return f;
     });
-    if (ids.length === 0) throw new Error('“' + from + '” has no FDs to move');
-    const payload = { from:from, to:to, ids:ids };
-    pushLog('transfer', accountTarget(from),
-      'Moved ' + ids.length + ' FD' + (ids.length === 1 ? '' : 's') + ' from “' + from + '” to “' + to + '”',
+    if (movedIds.length === 0) throw new Error('nothing to move');
+    const src = String(body.from || '').trim() || Object.keys(srcSet).join(', ');
+    const payload = { from:src, to:to, ids:movedIds };
+    pushLog('transfer', accountTarget(Object.keys(srcSet)[0] || src),
+      'Moved ' + movedIds.length + ' FD' + (movedIds.length === 1 ? '' : 's') + ' from “' + src + '” to “' + to + '”',
       payload, payload);
   } else if (body.action === 'undo'){
     const entry = log.find(function(e){ return e.id === body.logId; });
@@ -1849,8 +1862,26 @@ function FdForm({ initial, accounts, busy, onCancel, onSave, readOnly, title, he
 function TransferDialog({ account, accounts, fds, forceOut, busy, onCancel, onSubmit }){
   const [dir, setDir] = useState('out');         /* 'out' = this→other, 'in' = other→this */
   const [other, setOther] = useState('');
+  const [checked, setChecked] = useState({});
   const [err, setErr] = useState('');
   const effDir = forceOut ? 'out' : dir;
+  const low = function(s){ return String(s == null ? '' : s).toLowerCase(); };
+
+  const countOf = function(name){ return fds.filter(function(f){ return low(f.account) === low(name); }).length; };
+  const others = accounts.filter(function(a){ return a.name !== account.name; });
+  /* the account whose FDs you pick from */
+  const fromAccount = effDir === 'out' ? account.name : other;
+  const toAccount = effDir === 'out' ? other : account.name;
+  const candidates = fds.filter(function(f){ return fromAccount && low(f.account) === low(fromAccount); });
+  const selectedIds = candidates.filter(function(f){ return checked[f.id]; }).map(function(f){ return f.id; });
+
+  /* tick every FD of the source account by default whenever that set changes */
+  useEffect(function(){
+    const init = {};
+    fds.forEach(function(f){ if (fromAccount && low(f.account) === low(fromAccount)) init[f.id] = true; });
+    setChecked(init);
+    setErr('');
+  }, [effDir, other]);
 
   useEffect(function(){
     function onKey(e){ if (e.key === 'Escape' && !document.querySelector('.confirm-overlay')) onCancel(); }
@@ -1858,27 +1889,19 @@ function TransferDialog({ account, accounts, fds, forceOut, busy, onCancel, onSu
     return function(){ document.removeEventListener('keydown', onKey); };
   }, [onCancel]);
 
-  const countOf = function(name){
-    return fds.filter(function(f){ return String(f.account).toLowerCase() === String(name).toLowerCase(); }).length;
-  };
-  const others = accounts.filter(function(a){ return a.name !== account.name; });
-  const from = effDir === 'out' ? account.name : other;
-  const to = effDir === 'out' ? other : account.name;
-  const moving = effDir === 'out' ? countOf(account.name) : (other ? countOf(other) : 0);
+  function toggle(id){ setChecked(function(c){ const n = Object.assign({}, c); n[id] = !n[id]; return n; }); }
+  function setAll(val){ const n = {}; candidates.forEach(function(f){ n[f.id] = val; }); setChecked(n); }
 
   function submit(e){
     e.preventDefault();
-    if (!other){ setErr('Choose the other account.'); return; }
-    if (moving === 0){
-      setErr(effDir === 'out' ? '“' + account.name + '” has no FDs to move.' : '“' + other + '” has no FDs to move.');
-      return;
-    }
-    onSubmit(from, to, moving);
+    if (!other){ setErr('Choose the other account first.'); return; }
+    if (selectedIds.length === 0){ setErr('Tick at least one FD to move.'); return; }
+    onSubmit(selectedIds, fromAccount, toAccount, selectedIds.length);
   }
 
   return (
     <div className="overlay" onMouseDown={function(e){ if (e.target === e.currentTarget) onCancel(); }}>
-      <form className="modal" style={{ maxWidth:520 }} role="dialog" aria-modal="true"
+      <form className="modal" style={{ maxWidth:560 }} role="dialog" aria-modal="true"
             aria-label="Transfer FDs" onSubmit={submit}>
         <div className="modal-head">
           <h2>{forceOut ? 'Move FDs out of “' + account.name + '”' : 'Transfer FDs'}</h2>
@@ -1886,7 +1909,7 @@ function TransferDialog({ account, accounts, fds, forceOut, busy, onCancel, onSu
         </div>
         <div className="modal-body">
           {forceOut ? (
-            <div className="readonly-note">“{account.name}” still holds {countOf(account.name)} FD{countOf(account.name) === 1 ? '' : 's'}. Move them to another account, then you can delete it.</div>
+            <div className="readonly-note">“{account.name}” still holds {countOf(account.name)} FD{countOf(account.name) === 1 ? '' : 's'}. Pick the ones to move to another account, then you can delete it.</div>
           ) : null}
           {err && <div className="frm-err" role="alert">{err}</div>}
           {others.length === 0 ? (
@@ -1905,8 +1928,8 @@ function TransferDialog({ account, accounts, fds, forceOut, busy, onCancel, onSu
               </div>
             ) : null}
             <div className="frm-row">
-              <Field id="tr-other" label={effDir === 'out' ? 'Move all FDs to' : 'Take all FDs from'}>
-                <select id="tr-other" value={other} onChange={function(e){ setOther(e.target.value); setErr(''); }}>
+              <Field id="tr-other" label={effDir === 'out' ? 'Move selected FDs to' : 'Take selected FDs from'}>
+                <select id="tr-other" value={other} onChange={function(e){ setOther(e.target.value); }}>
                   <option value="">— choose account —</option>
                   {others.map(function(a){
                     return <option key={a.name} value={a.name}>{a.name} ({countOf(a.name)} FD{countOf(a.name) === 1 ? '' : 's'})</option>;
@@ -1914,11 +1937,42 @@ function TransferDialog({ account, accounts, fds, forceOut, busy, onCancel, onSu
                 </select>
               </Field>
             </div>
-            <div className="readout">
-              <span>{other
-                ? 'Moves ' + moving + ' FD' + (moving === 1 ? '' : 's') + ' from “' + from + '” to “' + to + '”.'
-                : 'Pick an account to see how many FDs will move.'}</span>
-            </div>
+            {!fromAccount ? (
+              <div className="panel-empty" style={{ padding:'6px 0' }}>Choose the account above to list its FDs.</div>
+            ) : candidates.length === 0 ? (
+              <div className="panel-empty" style={{ padding:'6px 0' }}>“{fromAccount}” has no FDs to move.</div>
+            ) : (
+              <div>
+                <div className="tr-tools">
+                  <span className="muted small">{selectedIds.length} of {candidates.length} selected</span>
+                  <button type="button" className="link-btn" onClick={function(){ setAll(true); }}>Select all</button>
+                  <button type="button" className="link-btn" onClick={function(){ setAll(false); }}>Clear</button>
+                </div>
+                <div className="tr-list">
+                  {candidates.map(function(fd){
+                    const intr = (fd.maturity > 0) ? fd.maturity - fd.principal : null;
+                    return (
+                      <label key={fd.id} className="tr-fd">
+                        <input type="checkbox" checked={!!checked[fd.id]} onChange={function(){ toggle(fd.id); }} />
+                        <span className="tr-fd-main">
+                          <span className="tr-fd-top">{fd.accountNumber ? fd.accountNumber : 'FD #' + fd.id} · {M.fmtINR(fd.principal || '')} → {M.fmtINR(fd.maturity || '')}</span>
+                          <span className="tr-fd-sub muted small">
+                            {M.fmtRate(fd.rate)} · {M.fmtDate(fd.startDate)} – {M.fmtDate(fd.endDate)} · {fd.status}
+                            {intr !== null ? ' · interest ' + M.fmtINR(M.round2(intr)) : ''}
+                            {fd.remarks ? ' · ' + fd.remarks : ''}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="readout">
+                  <span>{other
+                    ? 'Moves ' + selectedIds.length + ' of ' + candidates.length + ' FD' + (candidates.length === 1 ? '' : 's') + ' from “' + fromAccount + '” to “' + toAccount + '”.'
+                    : 'Pick the other account above to finish.'}</span>
+                </div>
+              </div>
+            )}
           </div>
           )}
         </div>
@@ -2157,18 +2211,18 @@ function App(){
   }
 
   /* TransferDialog → confirm → move. Confirmation always precedes the shift. */
-  function handleTransferSubmit(from, to, moving){
+  function handleTransferSubmit(ids, from, to, moving){
     setTransferring(null);
     setConfirm({
       title: 'Move ' + moving + ' FD' + (moving === 1 ? '' : 's') + '?',
       lines: [
         'From “' + from + '” to “' + to + '”.',
-        'Each FD\'s account is reassigned; nothing else changes.',
+        'Each selected FD\'s account is reassigned; nothing else changes.',
         LIVE ? 'Updates those rows in the Google Sheet.' : 'Demo: resets on refresh.'
       ],
       confirmLabel: 'Yes, move ' + (moving === 1 ? 'it' : 'them'),
       danger: false,
-      run: function(){ return mutate({ action:'transferFds', from: from, to: to }); }
+      run: function(){ return mutate({ action:'transferFds', ids: ids, from: from, to: to }); }
     });
   }
 
