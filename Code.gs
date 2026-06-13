@@ -572,6 +572,11 @@ function appendLog(action, target, summary, before, after) {
 /** Newest-first recent entries with canUndo computed: an entry is undoable
  *  only while it is the latest change to its target (never clobber a newer
  *  edit), is not an undo itself, and has not already been undone. */
+function parseJsonSafe(s) {
+  if (!s) return null;
+  try { return JSON.parse(String(s)); } catch (e) { return null; }
+}
+
 function readLog(limit) {
   var sheet;
   try { sheet = ensureLogSheet(); } catch (e) { return []; }
@@ -590,6 +595,9 @@ function readLog(limit) {
       action: String(v[3] || ''),
       target: String(v[4] || ''),
       summary: String(v[5] || ''),
+      // full snapshots so the app can show exactly what was recorded
+      before: parseJsonSafe(v[6]),
+      after: parseJsonSafe(v[7]),
       undone: toBool(v[8])
     });
   }

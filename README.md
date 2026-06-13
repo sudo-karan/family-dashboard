@@ -27,9 +27,10 @@ added.
   `FAMILY_PASSWORD` in Apps Script signs every device out at once.
 - **Light & dark mode** — follows the device by default, with a toggle.
 - **Change log + Undo** — every add/edit/delete shows up under a **History**
-  tab (with the device name that did it), and the latest change to any FD or
-  account can be undone — a deleted FD comes back with the same ID, an edit
-  reverts to its previous values.
+  tab (with the device name that did it). Tap an entry to reopen the FD or
+  account in a read-only form showing exactly what was recorded, and the
+  latest change to any item can be undone — a deleted FD comes back with the
+  same ID, an edit reverts to its previous values.
 - **Google Sheets is the database** — the family can keep editing the sheet
   directly; the app and the sheet never fight.
 
