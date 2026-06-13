@@ -10,8 +10,11 @@ added.
   what's maturing in the next 120 days (or overdue), breakdowns by person and
   by account.
 - **All FDs** — filter, sort, search, edit, delete, export CSV.
-- **Accounts** — add, edit and (when empty) delete accounts from the app;
-  renaming an account automatically updates every FD under it.
+- **Accounts** — add, edit, delete, and **transfer** FDs between accounts from
+  the app; renaming an account updates every FD under it, and deleting an
+  account that still holds FDs walks you through moving them first.
+- The dashboard summarises the **counted** deposits by default and can flip to
+  show the **hidden & inactive** ones as their own set.
 - **Add/edit form** — enter any two of *start / end / tenure* and any two of
   *rate / principal / maturity*; the third fills in automatically, and every
   computed value stays manually overridable (banks round differently — the
@@ -50,7 +53,7 @@ theme choice — all data lives in memory and in the sheet.
 **The backend is a Google Apps Script web app** (`Code.gs`) bound to the
 spreadsheet. It exposes one `doPost` endpoint accepting
 `{action: list | create | update | delete | accountCreate | accountUpdate |
-accountDelete | undo, password, device?, …}` and
+accountDelete | transferFds | undo, password, device?, …}` and
 always replies with the full fresh state `{ok, fds, accounts, log}`, so the client
 just replaces what it has — no merging, no cache to go stale. The shared
 family password is stored as a **script property**, never in code, and is

@@ -108,6 +108,7 @@
     padding:9px 14px; font-size:13.5px; margin-bottom:16px; }
 
   /* ---------- dashboard ---------- */
+  .dash-toggle{ margin-bottom:14px; }
   .cards{ display:grid; grid-template-columns:repeat(auto-fit, minmax(195px, 1fr)); gap:14px; margin-bottom:18px; }
   .card{ background:var(--surface); border:1px solid var(--line-2); border-radius:var(--radius);
     box-shadow:var(--shadow); padding:16px 18px 14px; }
@@ -553,7 +554,8 @@ function nowStamp(){
 function annotateLog(rawLog){
   const newestFirst = (rawLog || []).slice().reverse();
   return newestFirst.slice(0, 15).map(function(e, i){
-    let blocked = !!e.undone || e.action === 'undo';
+    /* transfers touch many rows; they're reversible by another transfer, not undo */
+    let blocked = !!e.undone || e.action === 'undo' || e.action === 'transfer';
     for (let j = 0; j < i && !blocked; j++){
       if (newestFirst[j].target === e.target) blocked = true;
     }
@@ -696,6 +698,21 @@ function demoMutate(data, body){
     const before = accounts.find(function(a){ return lower(a.name) === lower(name); });
     accounts = accounts.filter(function(a){ return lower(a.name) !== lower(name); });
     if (before) pushLog('accountDelete', accountTarget(before.name), 'Deleted account “' + before.name + '”', before, null);
+  } else if (body.action === 'transferFds'){
+    const from = String(body.from || '').trim(), to = String(body.to || '').trim();
+    if (!from || !to) throw new Error('choose both accounts');
+    if (lower(from) === lower(to)) throw new Error('pick a different destination account');
+    if (!accounts.some(function(a){ return lower(a.name) === lower(to); })) throw new Error('account “' + to + '” not found');
+    const ids = [];
+    fds = fds.map(function(f){
+      if (lower(f.account) === lower(from)){ ids.push(f.id); return Object.assign({}, f, { account: to }); }
+      return f;
+    });
+    if (ids.length === 0) throw new Error('“' + from + '” has no FDs to move');
+    const payload = { from:from, to:to, ids:ids };
+    pushLog('transfer', accountTarget(from),
+      'Moved ' + ids.length + ' FD' + (ids.length === 1 ? '' : 's') + ' from “' + from + '” to “' + to + '”',
+      payload, payload);
   } else if (body.action === 'undo'){
     const entry = log.find(function(e){ return e.id === body.logId; });
     if (!entry) throw new Error('log entry not found');
@@ -745,7 +762,7 @@ function demoMutate(data, body){
  *  outside a browser (unit tests).
  * ===================================================================== */
 const FDPrefs = (function(){
-  const AUTH = 'fd_auth', THEME = 'fd_theme', DEVICE = 'fd_device';
+  const AUTH = 'fd_auth', THEME = 'fd_theme', DEVICE = 'fd_device', TAB = 'fd_tab';
   const HALF_YEAR = 15552000; /* seconds */
 
   function readCookie(name){
@@ -768,6 +785,10 @@ const FDPrefs = (function(){
   function getDevice(){ return readCookie(DEVICE); }
   function setDevice(name){ writeCookie(DEVICE, String(name || '').trim().substring(0, 40), HALF_YEAR * 2); }
 
+  /* remember the open tab so a refresh keeps you where you were */
+  function getTab(){ return readCookie(TAB); }
+  function setTab(t){ writeCookie(TAB, String(t || ''), HALF_YEAR * 2); }
+
   function systemPrefersDark(){
     try {
       return typeof window !== 'undefined' && !!window.matchMedia &&
@@ -788,7 +809,7 @@ const FDPrefs = (function(){
   function setTheme(t){ writeCookie(THEME, t, HALF_YEAR * 2); applyTheme(t); }
 
   return { getAuth:getAuth, setAuth:setAuth, clearAuth:clearAuth,
-    getDevice:getDevice, setDevice:setDevice,
+    getDevice:getDevice, setDevice:setDevice, getTab:getTab, setTab:setTab,
     getTheme:getTheme, setTheme:setTheme, applyTheme:applyTheme };
 })();
 
@@ -918,12 +939,25 @@ function Login({ onLogin, busy, error }){
 }
 
 /* ============================== dashboard ============================== */
-function StatCards({ fds, shown }){
-  const inactive = fds.filter(function(f){ return f.status !== 'Active'; }).length;
-  const hiddenActive = fds.filter(function(f){ return f.status === 'Active' && !f.showInDashboard; }).length;
-  const ex = [];
-  if (inactive) ex.push(inactive + ' inactive');
-  if (hiddenActive) ex.push(hiddenActive + ' hidden');
+function StatCards({ fds, shown, view }){
+  const excluded = view === 'excluded';
+  const countIn = function(set, inactive){
+    return set.filter(function(f){
+      return inactive ? f.status !== 'Active' : (f.status === 'Active' && !f.showInDashboard);
+    }).length;
+  };
+  let viewNote;
+  if (excluded){
+    const parts = [];
+    if (countIn(shown, true)) parts.push(countIn(shown, true) + ' inactive');
+    if (countIn(shown, false)) parts.push(countIn(shown, false) + ' hidden-active');
+    viewNote = parts.length ? parts.join(' · ') : 'nothing hidden';
+  } else {
+    const parts = [];
+    if (countIn(fds, true)) parts.push(countIn(fds, true) + ' inactive');
+    if (countIn(fds, false)) parts.push(countIn(fds, false) + ' hidden');
+    viewNote = parts.length ? 'excludes ' + parts.join(' · ') : 'all deposits counted';
+  }
   const tp = shown.reduce(function(s, f){ return s + (Number(f.principal) || 0); }, 0);
   const tm = shown.reduce(function(s, f){ return s + (Number(f.maturity) || 0); }, 0);
   const accounts = {};
@@ -939,9 +973,9 @@ function StatCards({ fds, shown }){
   return (
     <div className="cards">
       <div className="card">
-        <div className="card-label">Deposits in view</div>
+        <div className="card-label">{excluded ? 'Hidden deposits' : 'Deposits in view'}</div>
         <div className="card-value">{shown.length}</div>
-        <div className="card-sub">{ex.length ? 'excludes ' + ex.join(' · ') : 'all deposits counted'}</div>
+        <div className="card-sub">{viewNote}</div>
       </div>
       <div className="card">
         <div className="card-label">Total principal</div>
@@ -1052,7 +1086,18 @@ function logPill(action){
   if (action === 'create' || action === 'accountCreate') return <span className="pill green log-pill">added</span>;
   if (action === 'update' || action === 'accountUpdate') return <span className="pill amber log-pill">edited</span>;
   if (action === 'delete' || action === 'accountDelete') return <span className="pill red log-pill">deleted</span>;
+  if (action === 'transfer') return <span className="pill amber log-pill">moved</span>;
   return <span className="pill gray log-pill">undid</span>;
+}
+
+/* An FD/account snapshot the read-only viewer can render, or null (e.g. for
+ * transfers, whose payload is {from,to,ids} and whose summary says it all). */
+function logSnapshot(e){
+  const snap = e.after || e.before;
+  if (!snap) return null;
+  if (/^fd:/.test(e.target)) return { snap: snap, isFd: true };
+  if (/^account:/.test(e.target) && snap.name) return { snap: snap, isFd: false };
+  return null;
 }
 
 function RecentChanges({ log, onUndo, onView }){
@@ -1066,7 +1111,7 @@ function RecentChanges({ log, onUndo, onView }){
         <div className="panel-empty">No changes recorded yet — they'll show up here as the family edits.</div>
       )}
       {(log || []).map(function(e){
-        const viewable = !!(e.after || e.before);
+        const viewable = !!logSnapshot(e);
         const inner = (
           <React.Fragment>
             {logPill(e.action)}
@@ -1097,7 +1142,10 @@ function RecentChanges({ log, onUndo, onView }){
 }
 
 function Dashboard({ fds, onEdit }){
-  const shown = fds.filter(isOnDashboard);
+  const [view, setView] = useState('counted'); /* 'counted' | 'excluded' */
+  const counted = fds.filter(isOnDashboard);
+  const excluded = fds.filter(function(f){ return !isOnDashboard(f); });
+  const shown = view === 'excluded' ? excluded : counted;
   function group(keyFn, subFn){
     const map = {};
     shown.forEach(function(f){
@@ -1112,7 +1160,15 @@ function Dashboard({ fds, onEdit }){
   }
   return (
     <div>
-      <StatCards fds={fds} shown={shown} />
+      <div className="dash-toggle">
+        <div className="seg" role="group" aria-label="Which deposits to summarise">
+          <button type="button" className={'seg-btn' + (view === 'counted' ? ' on' : '')}
+                  onClick={function(){ setView('counted'); }}>On dashboard ({counted.length})</button>
+          <button type="button" className={'seg-btn' + (view === 'excluded' ? ' on' : '')}
+                  onClick={function(){ setView('excluded'); }}>Hidden &amp; inactive ({excluded.length})</button>
+        </div>
+      </div>
+      <StatCards fds={fds} shown={shown} view={view} />
       <MaturingSoon shown={shown} onEdit={onEdit} />
       <div className="grid-2">
         <Breakdown title="By person" rows={group(function(f){ return f.person; })} />
@@ -1297,8 +1353,8 @@ function AllFDs({ fds, accounts, onEdit, onDelete }){
                   <td className="remarks-cell" title={f.remarks || ''}>{f.remarks || ''}</td>
                   <td className="row-actions">
                     <button type="button" className="btn ghost small" onClick={function(){ onEdit(f); }}>Edit</button>
-                    <button type="button" className="btn danger-ghost" aria-label={'Delete FD ' + f.id}
-                            onClick={function(){ onDelete(f); }}>✕</button>
+                    <button type="button" className="btn danger-ghost small" aria-label={'Delete FD ' + f.id}
+                            onClick={function(){ onDelete(f); }}>Delete</button>
                   </td>
                 </tr>
               );
@@ -1320,7 +1376,7 @@ function AllFDs({ fds, accounts, onEdit, onDelete }){
 }
 
 /* ============================== accounts tab ============================== */
-function AccountsView({ accounts, fds, onAdd, onEdit, onDelete }){
+function AccountsView({ accounts, fds, onAdd, onEdit, onDelete, onTransfer }){
   const stats = {};
   fds.forEach(function(f){
     const s = stats[f.account] = stats[f.account] || { count:0, principal:0 };
@@ -1359,10 +1415,11 @@ function AccountsView({ accounts, fds, onAdd, onEdit, onDelete }){
                   <td className="num">{s.count ? M.fmtINR(s.principal) : '—'}{s.count && M.fmtINRWords(s.principal) ? <div className="cell-sub cell-words">{M.fmtINRWords(s.principal)}</div> : null}</td>
                   <td className="row-actions" style={{ textAlign:'right' }}>
                     <button type="button" className="btn ghost small" onClick={function(){ onEdit(a); }}>Edit</button>
-                    <button type="button" className="btn danger-ghost" aria-label={'Delete account ' + a.name}
-                            disabled={s.count > 0}
-                            title={s.count > 0 ? 'Move or delete its ' + s.count + ' FD(s) first' : 'Delete this account'}
-                            onClick={function(){ onDelete(a); }}>✕</button>
+                    <button type="button" className="btn ghost small" onClick={function(){ onTransfer(a); }}
+                            title="Move FDs to or from this account">Transfer</button>
+                    <button type="button" className="btn danger-ghost small" aria-label={'Delete account ' + a.name}
+                            title={s.count > 0 ? 'You will be asked to move its ' + s.count + ' FD(s) first' : 'Delete this account'}
+                            onClick={function(){ onDelete(a); }}>Delete</button>
                   </td>
                 </tr>
               );
@@ -1785,6 +1842,97 @@ function FdForm({ initial, accounts, busy, onCancel, onSave, readOnly, title, he
   );
 }
 
+/* ============================== transfer FDs ============================== */
+/* Move every FD from one account to another — out of this account, or into it
+ * from another. Used on its own (Transfer button) and as the first step of
+ * deleting an account that still holds FDs. */
+function TransferDialog({ account, accounts, fds, forceOut, busy, onCancel, onSubmit }){
+  const [dir, setDir] = useState('out');         /* 'out' = this→other, 'in' = other→this */
+  const [other, setOther] = useState('');
+  const [err, setErr] = useState('');
+  const effDir = forceOut ? 'out' : dir;
+
+  useEffect(function(){
+    function onKey(e){ if (e.key === 'Escape' && !document.querySelector('.confirm-overlay')) onCancel(); }
+    document.addEventListener('keydown', onKey);
+    return function(){ document.removeEventListener('keydown', onKey); };
+  }, [onCancel]);
+
+  const countOf = function(name){
+    return fds.filter(function(f){ return String(f.account).toLowerCase() === String(name).toLowerCase(); }).length;
+  };
+  const others = accounts.filter(function(a){ return a.name !== account.name; });
+  const from = effDir === 'out' ? account.name : other;
+  const to = effDir === 'out' ? other : account.name;
+  const moving = effDir === 'out' ? countOf(account.name) : (other ? countOf(other) : 0);
+
+  function submit(e){
+    e.preventDefault();
+    if (!other){ setErr('Choose the other account.'); return; }
+    if (moving === 0){
+      setErr(effDir === 'out' ? '“' + account.name + '” has no FDs to move.' : '“' + other + '” has no FDs to move.');
+      return;
+    }
+    onSubmit(from, to, moving);
+  }
+
+  return (
+    <div className="overlay" onMouseDown={function(e){ if (e.target === e.currentTarget) onCancel(); }}>
+      <form className="modal" style={{ maxWidth:520 }} role="dialog" aria-modal="true"
+            aria-label="Transfer FDs" onSubmit={submit}>
+        <div className="modal-head">
+          <h2>{forceOut ? 'Move FDs out of “' + account.name + '”' : 'Transfer FDs'}</h2>
+          <button type="button" className="btn ghost" aria-label="Close" onClick={onCancel}>✕</button>
+        </div>
+        <div className="modal-body">
+          {forceOut ? (
+            <div className="readonly-note">“{account.name}” still holds {countOf(account.name)} FD{countOf(account.name) === 1 ? '' : 's'}. Move them to another account, then you can delete it.</div>
+          ) : null}
+          {err && <div className="frm-err" role="alert">{err}</div>}
+          {others.length === 0 ? (
+            <div className="panel-empty" style={{ padding:'10px 0' }}>There's no other account to transfer with — add one first.</div>
+          ) : (
+          <div className="frm-section">
+            {!forceOut ? (
+              <div className="field" style={{ marginBottom:12 }}>
+                <label>Direction</label>
+                <div className="seg" role="group" aria-label="Transfer direction">
+                  <button type="button" className={'seg-btn' + (dir === 'out' ? ' on' : '')}
+                          onClick={function(){ setDir('out'); }}>Move out of this</button>
+                  <button type="button" className={'seg-btn' + (dir === 'in' ? ' on' : '')}
+                          onClick={function(){ setDir('in'); }}>Move into this</button>
+                </div>
+              </div>
+            ) : null}
+            <div className="frm-row">
+              <Field id="tr-other" label={effDir === 'out' ? 'Move all FDs to' : 'Take all FDs from'}>
+                <select id="tr-other" value={other} onChange={function(e){ setOther(e.target.value); setErr(''); }}>
+                  <option value="">— choose account —</option>
+                  {others.map(function(a){
+                    return <option key={a.name} value={a.name}>{a.name} ({countOf(a.name)} FD{countOf(a.name) === 1 ? '' : 's'})</option>;
+                  })}
+                </select>
+              </Field>
+            </div>
+            <div className="readout">
+              <span>{other
+                ? 'Moves ' + moving + ' FD' + (moving === 1 ? '' : 's') + ' from “' + from + '” to “' + to + '”.'
+                : 'Pick an account to see how many FDs will move.'}</span>
+            </div>
+          </div>
+          )}
+        </div>
+        <div className="modal-foot">
+          <button type="button" className="btn" onClick={onCancel}>Cancel</button>
+          <button type="submit" className="btn primary" disabled={busy || others.length === 0}>
+            {busy ? 'Working…' : 'Review move'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 /* ============================== confirmation dialog ============================== */
 /* One reusable yes/no step for add / edit / delete. Cancel is the focused,
  * safe default, so a stray Enter or mis-tap never destroys anything. */
@@ -1819,11 +1967,13 @@ function ConfirmDialog({ title, lines, confirmLabel, danger, busy, onConfirm, on
 
 /* ============================== app shell ============================== */
 function App(){
+  const TABS = { dashboard:1, all:1, accounts:1, history:1 };
   const [auth, setAuth] = useState(null);
   const [data, setData] = useState(null);
-  const [tab, setTab] = useState('dashboard');
+  const [tab, setTab] = useState(function(){ const t = FDPrefs.getTab(); return TABS[t] ? t : 'dashboard'; });
   const [editing, setEditing] = useState(null);      /* null | 'new' | fd */
   const [accEditing, setAccEditing] = useState(null); /* null | 'new' | account */
+  const [transferring, setTransferring] = useState(null); /* {account, forceOut} */
   const [confirm, setConfirm] = useState(null);      /* {title, lines, confirmLabel, danger, run} */
   const [viewing, setViewing] = useState(null);      /* a log entry being inspected read-only */
   const [busy, setBusy] = useState(false);
@@ -1982,7 +2132,17 @@ function App(){
     });
   }
 
+  function accountFdCount(name){
+    return data.fds.filter(function(f){ return String(f.account).toLowerCase() === String(name).toLowerCase(); }).length;
+  }
+
   function handleAccountDelete(acc){
+    /* an account holding FDs can't be deleted until they're moved — so the
+       Delete button opens the transfer step first (the user deletes after) */
+    if (accountFdCount(acc.name) > 0){
+      setTransferring({ account: acc, forceOut: true });
+      return;
+    }
     setConfirm({
       title: 'Delete this account?',
       lines: [
@@ -1993,6 +2153,22 @@ function App(){
       confirmLabel: 'Yes, delete account',
       danger: true,
       run: function(){ return mutate({ action:'accountDelete', name: acc.name }); }
+    });
+  }
+
+  /* TransferDialog → confirm → move. Confirmation always precedes the shift. */
+  function handleTransferSubmit(from, to, moving){
+    setTransferring(null);
+    setConfirm({
+      title: 'Move ' + moving + ' FD' + (moving === 1 ? '' : 's') + '?',
+      lines: [
+        'From “' + from + '” to “' + to + '”.',
+        'Each FD\'s account is reassigned; nothing else changes.',
+        LIVE ? 'Updates those rows in the Google Sheet.' : 'Demo: resets on refresh.'
+      ],
+      confirmLabel: 'Yes, move ' + (moving === 1 ? 'it' : 'them'),
+      danger: false,
+      run: function(){ return mutate({ action:'transferFds', from: from, to: to }); }
     });
   }
 
@@ -2044,6 +2220,7 @@ function App(){
   function switchTab(t){
     if (t !== tab && LIVE) refresh();
     setTab(t);
+    FDPrefs.setTab(t); /* survive a page refresh */
   }
 
   if (boot){
@@ -2120,6 +2297,7 @@ function App(){
         {tab === 'accounts' && <AccountsView accounts={data.accounts} fds={joined}
                 onAdd={function(){ setAccEditing('new'); }}
                 onEdit={function(a){ setAccEditing(a); }}
+                onTransfer={function(a){ setTransferring({ account: a, forceOut: false }); }}
                 onDelete={handleAccountDelete} />}
         {tab === 'history' && <RecentChanges log={data.log || []} onUndo={handleUndo} onView={function(e){ setViewing(e); }} />}
       </main>
@@ -2141,6 +2319,13 @@ function App(){
                 onSave={handleAccountSave} />
       )}
 
+      {transferring !== null && (
+        <TransferDialog account={transferring.account} accounts={data.accounts} fds={joined}
+                forceOut={transferring.forceOut} busy={busy}
+                onCancel={function(){ setTransferring(null); }}
+                onSubmit={handleTransferSubmit} />
+      )}
+
       {confirm !== null && (
         <ConfirmDialog title={confirm.title} lines={confirm.lines}
                 confirmLabel={confirm.confirmLabel} danger={confirm.danger}
@@ -2150,9 +2335,9 @@ function App(){
       )}
 
       {viewing !== null && (function(){
-        const snap = viewing.after || viewing.before;
-        if (!snap) return null;
-        const isFd = /^fd:/.test(viewing.target);
+        const s = logSnapshot(viewing);
+        if (!s) return null;
+        const snap = s.snap, isFd = s.isFd;
         const verb = VERBS[viewing.action] || 'Recorded';
         const note = 'Read-only — exactly what was recorded · ' +
           fmtStamp(viewing.time) + (viewing.device ? ' · ' + viewing.device : '');

@@ -111,6 +111,8 @@ function doPost(e) {
       accountUpdate(req.account || {}, req.originalName);
     } else if (action === 'accountDelete') {
       accountDelete(req.name);
+    } else if (action === 'transferFds') {
+      transferFds(req.from, req.to);
     } else if (action === 'undo') {
       undoLog(req.logId);
     } else {
@@ -500,6 +502,28 @@ function accountDelete(name) {
   appendLog('accountDelete', accountTarget(before.name), 'Deleted account "' + before.name + '"', before, null);
 }
 
+/** Move every FD from one account to another (reassign the `account` field). */
+function transferFds(from, to) {
+  from = String(from || '').trim();
+  to = String(to || '').trim();
+  if (!from || !to) throw new Error('choose both accounts');
+  if (from.toLowerCase() === to.toLowerCase()) throw new Error('pick a different destination account');
+  if (!findAccountByName(to)) throw new Error('account "' + to + '" not found');
+  var fds = readFds();
+  var moved = [];
+  for (var i = 0; i < fds.length; i++) {
+    if (String(fds[i].account).trim().toLowerCase() === from.toLowerCase()) {
+      rawUpdateFd(applyDefaults(Object.assign({}, fds[i], { account: to })));
+      moved.push(fds[i].id);
+    }
+  }
+  if (moved.length === 0) throw new Error('"' + from + '" has no FDs to move');
+  var payload = { from: from, to: to, ids: moved };
+  appendLog('transfer', 'account:' + from.toLowerCase(),
+    'Moved ' + moved.length + ' FD' + (moved.length === 1 ? '' : 's') + ' from "' + from + '" to "' + to + '"',
+    payload, payload);
+}
+
 function rawAccountDelete(name) {
   var want = String(name || '').trim().toLowerCase();
   if (!want) throw new Error('missing account name');
@@ -603,7 +627,8 @@ function readLog(limit) {
   }
   for (var i = 0; i < entries.length; i++) {
     var e = entries[i];
-    var blocked = e.undone || e.action === 'undo';
+    // transfers move many rows and are reversible by another transfer, not undo
+    var blocked = e.undone || e.action === 'undo' || e.action === 'transfer';
     for (var j = 0; j < i && !blocked; j++) { // entries[j] are newer
       if (entries[j].target === e.target) blocked = true;
     }
