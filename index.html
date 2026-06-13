@@ -1052,8 +1052,8 @@ function RecentChanges({ log, onUndo }){
   return (
     <div className="panel">
       <div className="panel-head">
-        <div className="panel-title">Recent changes</div>
-        <div className="panel-sub">Every add, edit and delete. The latest change to an item can be undone — full history lives in the sheet's “Log” tab.</div>
+        <div className="panel-title">Change history</div>
+        <div className="panel-sub">Every add, edit and delete, newest first. The latest change to an item can be undone — the complete history lives in the sheet's “Log” tab.</div>
       </div>
       {(!log || log.length === 0) && (
         <div className="panel-empty">No changes recorded yet — they'll show up here as the family edits.</div>
@@ -1076,7 +1076,7 @@ function RecentChanges({ log, onUndo }){
   );
 }
 
-function Dashboard({ fds, log, onEdit, onUndo }){
+function Dashboard({ fds, onEdit }){
   const shown = fds.filter(isOnDashboard);
   function group(keyFn, subFn){
     const map = {};
@@ -1094,7 +1094,6 @@ function Dashboard({ fds, log, onEdit, onUndo }){
     <div>
       <StatCards fds={fds} shown={shown} />
       <MaturingSoon shown={shown} onEdit={onEdit} />
-      <RecentChanges log={log} onUndo={onUndo} />
       <div className="grid-2">
         <Breakdown title="By person" rows={group(function(f){ return f.person; })} />
         <Breakdown title="By account" rows={group(function(f){ return f.account; }, function(f){ return f.person; })} />
@@ -2043,6 +2042,8 @@ function App(){
                   onClick={function(){ switchTab('all'); }}>All FDs</button>
           <button type="button" className={'tab-btn' + (tab === 'accounts' ? ' on' : '')}
                   onClick={function(){ switchTab('accounts'); }}>Accounts</button>
+          <button type="button" className={'tab-btn' + (tab === 'history' ? ' on' : '')}
+                  onClick={function(){ switchTab('history'); }}>History</button>
         </nav>
         <div className="topbar-actions">
           <button type="button" className="btn theme-btn" onClick={toggleTheme}
@@ -2070,12 +2071,13 @@ function App(){
       )}
 
       <main>
-        {tab === 'dashboard' && <Dashboard fds={joined} log={data.log || []} onEdit={function(f){ setEditing(f); }} onUndo={handleUndo} />}
+        {tab === 'dashboard' && <Dashboard fds={joined} onEdit={function(f){ setEditing(f); }} />}
         {tab === 'all' && <AllFDs fds={joined} accounts={data.accounts} onEdit={function(f){ setEditing(f); }} onDelete={handleDelete} />}
         {tab === 'accounts' && <AccountsView accounts={data.accounts} fds={joined}
                 onAdd={function(){ setAccEditing('new'); }}
                 onEdit={function(a){ setAccEditing(a); }}
                 onDelete={handleAccountDelete} />}
+        {tab === 'history' && <RecentChanges log={data.log || []} onUndo={handleUndo} />}
       </main>
 
       {editing !== null && (
