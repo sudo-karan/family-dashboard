@@ -953,22 +953,17 @@ function Login({ onLogin, busy, error }){
 
 /* ============================== dashboard ============================== */
 function StatCards({ fds, shown, view }){
-  const excluded = view === 'excluded';
-  const countIn = function(set, inactive){
-    return set.filter(function(f){
-      return inactive ? f.status !== 'Active' : (f.status === 'Active' && !f.showInDashboard);
-    }).length;
-  };
+  const hidden = view === 'hidden';
+  const inactiveCount = fds.filter(function(f){ return f.status !== 'Active'; }).length;
+  const hiddenCount = fds.filter(function(f){ return f.status === 'Active' && !f.showInDashboard; }).length;
   let viewNote;
-  if (excluded){
-    const parts = [];
-    if (countIn(shown, true)) parts.push(countIn(shown, true) + ' inactive');
-    if (countIn(shown, false)) parts.push(countIn(shown, false) + ' hidden-active');
-    viewNote = parts.length ? parts.join(' · ') : 'nothing hidden';
+  if (hidden){
+    /* the hidden view is only active FDs kept off the dashboard on purpose */
+    viewNote = shown.length ? 'active, kept off the dashboard' : 'nothing hidden';
   } else {
     const parts = [];
-    if (countIn(fds, true)) parts.push(countIn(fds, true) + ' inactive');
-    if (countIn(fds, false)) parts.push(countIn(fds, false) + ' hidden');
+    if (inactiveCount) parts.push(inactiveCount + ' inactive');
+    if (hiddenCount) parts.push(hiddenCount + ' hidden');
     viewNote = parts.length ? 'excludes ' + parts.join(' · ') : 'all deposits counted';
   }
   const tp = shown.reduce(function(s, f){ return s + (Number(f.principal) || 0); }, 0);
@@ -986,7 +981,7 @@ function StatCards({ fds, shown, view }){
   return (
     <div className="cards">
       <div className="card">
-        <div className="card-label">{excluded ? 'Hidden deposits' : 'Deposits in view'}</div>
+        <div className="card-label">{hidden ? 'Hidden deposits' : 'Deposits in view'}</div>
         <div className="card-value">{shown.length}</div>
         <div className="card-sub">{viewNote}</div>
       </div>
@@ -1155,10 +1150,12 @@ function RecentChanges({ log, onUndo, onView }){
 }
 
 function Dashboard({ fds, onEdit }){
-  const [view, setView] = useState('counted'); /* 'counted' | 'excluded' */
+  const [view, setView] = useState('counted'); /* 'counted' | 'hidden' */
   const counted = fds.filter(isOnDashboard);
-  const excluded = fds.filter(function(f){ return !isOnDashboard(f); });
-  const shown = view === 'excluded' ? excluded : counted;
+  /* "hidden" = Active deposits deliberately kept off the dashboard
+     (showInDashboard=false). Inactive ones don't get a summary at all. */
+  const hidden = fds.filter(function(f){ return f.status === 'Active' && !f.showInDashboard; });
+  const shown = view === 'hidden' ? hidden : counted;
   function group(keyFn, subFn){
     const map = {};
     shown.forEach(function(f){
@@ -1177,8 +1174,8 @@ function Dashboard({ fds, onEdit }){
         <div className="seg" role="group" aria-label="Which deposits to summarise">
           <button type="button" className={'seg-btn' + (view === 'counted' ? ' on' : '')}
                   onClick={function(){ setView('counted'); }}>On dashboard ({counted.length})</button>
-          <button type="button" className={'seg-btn' + (view === 'excluded' ? ' on' : '')}
-                  onClick={function(){ setView('excluded'); }}>Hidden &amp; inactive ({excluded.length})</button>
+          <button type="button" className={'seg-btn' + (view === 'hidden' ? ' on' : '')}
+                  onClick={function(){ setView('hidden'); }}>Hidden ({hidden.length})</button>
         </div>
       </div>
       <StatCards fds={fds} shown={shown} view={view} />

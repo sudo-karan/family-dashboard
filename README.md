@@ -16,7 +16,8 @@ added.
   and deleting an account that still holds FDs walks you through moving them
   first.
 - The dashboard summarises the **counted** deposits by default and can flip to
-  show the **hidden & inactive** ones as their own set.
+  a **hidden** set — active FDs deliberately kept off the dashboard. (Inactive
+  deposits aren't summarised at all.)
 - **Add/edit form** — enter any two of *start / end / tenure* and any two of
   *rate / principal / maturity*; the third fills in automatically, and every
   computed value stays manually overridable (banks round differently — the
