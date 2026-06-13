@@ -10,9 +10,11 @@ added.
   what's maturing in the next 120 days (or overdue), breakdowns by person and
   by account.
 - **All FDs** — filter, sort, search, edit, delete, export CSV.
-- **Accounts** — add, edit, delete, and **transfer** FDs between accounts from
-  the app; renaming an account updates every FD under it, and deleting an
-  account that still holds FDs walks you through moving them first.
+- **Accounts** — add, edit, delete, and **transfer** FDs between accounts: a
+  checklist lets you pick exactly which FDs to move (in either direction),
+  with each FD's details shown. Renaming an account updates every FD under it,
+  and deleting an account that still holds FDs walks you through moving them
+  first.
 - The dashboard summarises the **counted** deposits by default and can flip to
   show the **hidden & inactive** ones as their own set.
 - **Add/edit form** — enter any two of *start / end / tenure* and any two of
