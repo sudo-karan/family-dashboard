@@ -115,6 +115,12 @@ function doPost(e) {
       transferFds(req.ids, req.to, req.from);
     } else if (action === 'undo') {
       undoLog(req.logId);
+    } else if (action === 'subscribe') {
+      subscribePush(req.subscription, CURRENT_DEVICE);
+      return jsonOut({ ok: true });
+    } else if (action === 'unsubscribe') {
+      unsubscribePush(req.endpoint);
+      return jsonOut({ ok: true });
     } else {
       return jsonOut({ ok: false, error: 'unknown action: ' + action });
     }
@@ -123,7 +129,10 @@ function doPost(e) {
     // this, the read in the same request can still see pre-change data
     // (classic Apps Script behaviour, most visible after deleteRow).
     SpreadsheetApp.flush();
-    return jsonOut({ ok: true, fds: readFds(), accounts: readAccounts(), log: readLog(15) });
+    return jsonOut({
+      ok: true, fds: readFds(), accounts: readAccounts(), log: readLog(15),
+      vapidPublic: PropertiesService.getScriptProperties().getProperty('VAPID_PUBLIC') || ''
+    });
   } catch (err) {
     return jsonOut({ ok: false, error: String(err && err.message ? err.message : err) });
   } finally {
@@ -694,4 +703,182 @@ function undoLog(logId) {
 
   sheet.getRange(idx + 2, 9).setValue(true); // Undone column
   appendLog('undo', target, 'Undid: ' + summary, after, before);
+}
+
+// ===================================================================
+//  Push reminders (Web Push to the installed PWA)
+//
+//  Sends a payload-less push (no FD details on the lock screen — privacy)
+//  when an Active FD matures in 2 days, 1 day, or today, IST. Driven by a
+//  daily time trigger around 10:00 in the project's timezone (set it to
+//  Asia/Kolkata — see SETUP.md). VAPID JWTs are signed with the pure-BigInt
+//  ES256 implementation below (Apps Script has no native ECDSA); the same
+//  algorithm is validated against Node's crypto in the repo's tests.
+// ===================================================================
+
+var PUSH_SHEET = 'PushSubs';
+var PUSH_HEADERS = ['Endpoint', 'P256dh', 'Auth', 'Device', 'Added'];
+
+/* ---- byte helpers (Apps Script Byte[] are signed -128..127) ---- */
+function toSigned(arr) { return arr.map(function (v) { return v > 127 ? v - 256 : v; }); }
+function toUnsigned(arr) { return arr.map(function (v) { return v < 0 ? v + 256 : v; }); }
+function strBytes(s) { return toUnsigned(Utilities.newBlob(s).getBytes()); }
+function gsSha256(u) { return toUnsigned(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, toSigned(u))); }
+function gsHmac(keyU, msgU) { return toUnsigned(Utilities.computeHmacSha256Signature(toSigned(msgU), toSigned(keyU))); }
+function b64urlEncodeBytes(u) { return Utilities.base64EncodeWebSafe(toSigned(u)).replace(/=+$/, ''); }
+function b64urlDecodeBytes(s) { return toUnsigned(Utilities.base64DecodeWebSafe(s)); }
+
+/* ---- pure-BigInt P-256 ECDSA (ES256), no native crypto needed ---- */
+var ES256 = (function () {
+  var p = 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffffn;
+  var a = p - 3n;
+  var n = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
+  var Gx = 0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296n;
+  var Gy = 0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5n;
+  function mod(x, m) { var r = x % m; return r < 0n ? r + m : r; }
+  function modInv(x, m) {
+    var lo = mod(x, m), hi = m, a0 = 1n, a1 = 0n;
+    while (lo > 0n) { var q = hi / lo; var t = hi - q * lo; hi = lo; lo = t; t = a1 - q * a0; a1 = a0; a0 = t; }
+    return mod(a1, m);
+  }
+  function add(P, Q) {
+    if (!P) return Q; if (!Q) return P;
+    var x1 = P[0], y1 = P[1], x2 = Q[0], y2 = Q[1];
+    if (x1 === x2 && mod(y1 + y2, p) === 0n) return null;
+    var m;
+    if (x1 === x2 && y1 === y2) m = mod((3n * x1 * x1 + a) * modInv(2n * y1, p), p);
+    else m = mod((y2 - y1) * modInv(mod(x2 - x1, p), p), p);
+    var x3 = mod(m * m - x1 - x2, p);
+    return [x3, mod(m * (x1 - x3) - y1, p)];
+  }
+  function mul(k, P) { var R = null, A = P; while (k > 0n) { if (k & 1n) R = add(R, A); A = add(A, A); k >>= 1n; } return R; }
+  function bytesToBig(b) { var x = 0n; for (var i = 0; i < b.length; i++) x = (x << 8n) | BigInt(b[i]); return x; }
+  function bigTo32(x) { var o = new Array(32); for (var i = 31; i >= 0; i--) { o[i] = Number(x & 0xffn); x >>= 8n; } return o; }
+  function rfc6979k(h, x, hmac) {
+    var z2 = bigTo32(mod(bytesToBig(h), n));
+    var V = []; for (var i = 0; i < 32; i++) V.push(0x01);
+    var K = []; for (var j = 0; j < 32; j++) K.push(0x00);
+    K = hmac(K, V.concat([0x00], x, z2)); V = hmac(K, V);
+    K = hmac(K, V.concat([0x01], x, z2)); V = hmac(K, V);
+    for (;;) { V = hmac(K, V); var k = mod(bytesToBig(V), n); if (k >= 1n && k < n) return k; K = hmac(K, V.concat([0x00])); V = hmac(K, V); }
+  }
+  function signRaw(msgBytes, dBytes, sha256, hmac) {
+    var h = sha256(msgBytes), z = mod(bytesToBig(h), n), d = bytesToBig(dBytes), r, s;
+    for (;;) {
+      var k = rfc6979k(h, dBytes, hmac);
+      var Rp = mul(k, [Gx, Gy]); r = mod(Rp[0], n); if (r === 0n) continue;
+      s = mod(modInv(k, n) * mod(z + r * d, n), n); if (s === 0n) continue;
+      if (s > n / 2n) s = n - s; break;
+    }
+    return bigTo32(r).concat(bigTo32(s));
+  }
+  function publicKey(dBytes) { var Q = mul(bytesToBig(dBytes), [Gx, Gy]); return [0x04].concat(bigTo32(Q[0]), bigTo32(Q[1])); }
+  return { signRaw: signRaw, publicKey: publicKey };
+})();
+
+/** Run once in the editor; copy the two logged values into Script Properties. */
+function generateVapidKeys() {
+  var seed = Utilities.getUuid() + Utilities.getUuid() + Utilities.getUuid() + String(Date.now());
+  var d = gsSha256(strBytes(seed)); // 32 bytes, ~256-bit entropy
+  var pub = ES256.publicKey(d);
+  Logger.log('VAPID_PUBLIC = ' + b64urlEncodeBytes(pub));
+  Logger.log('VAPID_PRIVATE = ' + b64urlEncodeBytes(d));
+  Logger.log('Add both as Script Properties, plus VAPID_SUBJECT = mailto:you@example.com');
+}
+
+function vapidJwt(aud) {
+  var props = PropertiesService.getScriptProperties();
+  var privB64 = props.getProperty('VAPID_PRIVATE');
+  var sub = props.getProperty('VAPID_SUBJECT') || 'mailto:fd-tracker@example.com';
+  if (!privB64) throw new Error('VAPID keys not set');
+  var header = b64urlEncodeBytes(strBytes(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
+  var payload = b64urlEncodeBytes(strBytes(JSON.stringify({ aud: aud, exp: Math.floor(Date.now() / 1000) + 43200, sub: sub })));
+  var signingInput = header + '.' + payload;
+  var sig = ES256.signRaw(strBytes(signingInput), b64urlDecodeBytes(privB64), gsSha256, gsHmac);
+  return signingInput + '.' + b64urlEncodeBytes(sig);
+}
+
+/** Payload-less Web Push to one endpoint; returns the HTTP status code. */
+function webPushSend(endpoint) {
+  var aud = (String(endpoint).match(/^(https?:\/\/[^\/]+)/) || [])[1];
+  if (!aud) return 0;
+  var jwt = vapidJwt(aud);
+  var pub = PropertiesService.getScriptProperties().getProperty('VAPID_PUBLIC');
+  var res = UrlFetchApp.fetch(endpoint, {
+    method: 'post',
+    headers: { 'TTL': '86400', 'Authorization': 'vapid t=' + jwt + ', k=' + pub },
+    muteHttpExceptions: true
+  });
+  return res.getResponseCode();
+}
+
+// ---- subscription storage ----
+function ensurePushSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(PUSH_SHEET);
+  if (!sheet) { sheet = ss.insertSheet(PUSH_SHEET); sheet.getRange(1, 1, 1, PUSH_HEADERS.length).setValues([PUSH_HEADERS]); }
+  return sheet;
+}
+function readSubs() {
+  var sheet = ensurePushSheet();
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var v = sheet.getRange(2, 1, lastRow - 1, PUSH_HEADERS.length).getValues();
+  var out = [];
+  for (var r = 0; r < v.length; r++) { if (v[r][0]) out.push({ endpoint: String(v[r][0]), p256dh: String(v[r][1]), auth: String(v[r][2]), row: r + 2 }); }
+  return out;
+}
+function subscribePush(sub, device) {
+  if (!sub || !sub.endpoint) throw new Error('missing push subscription');
+  var keys = sub.keys || {};
+  var sheet = ensurePushSheet();
+  var subs = readSubs();
+  for (var i = 0; i < subs.length; i++) {
+    if (subs[i].endpoint === sub.endpoint) {
+      sheet.getRange(subs[i].row, 1, 1, PUSH_HEADERS.length)
+        .setValues([[sub.endpoint, keys.p256dh || '', keys.auth || '', device || '', new Date()]]);
+      return;
+    }
+  }
+  sheet.appendRow([sub.endpoint, keys.p256dh || '', keys.auth || '', device || '', new Date()]);
+}
+function unsubscribePush(endpoint) {
+  if (!endpoint) return;
+  var sheet = ensurePushSheet();
+  var subs = readSubs();
+  for (var i = subs.length - 1; i >= 0; i--) { if (subs[i].endpoint === endpoint) sheet.deleteRow(subs[i].row); }
+}
+
+// ---- the daily reminder job ----
+function istDateString(offsetDays) {
+  var d = new Date(Date.now() + offsetDays * 86400000);
+  return Utilities.formatDate(d, 'Asia/Kolkata', 'yyyy-MM-dd');
+}
+/** Trigger target: push if any Active FD matures in {0,1,2} days IST. */
+function sendMaturityPush() {
+  if (!PropertiesService.getScriptProperties().getProperty('VAPID_PUBLIC')) return;
+  var targets = {};
+  targets[istDateString(0)] = 1; targets[istDateString(1)] = 1; targets[istDateString(2)] = 1;
+  var fds = readFds();
+  var due = false;
+  for (var i = 0; i < fds.length; i++) {
+    if (fds[i].status === 'Active' && targets[fds[i].endDate]) { due = true; break; }
+  }
+  if (!due) return;
+  var subs = readSubs();
+  for (var s = 0; s < subs.length; s++) {
+    try {
+      var code = webPushSend(subs[s].endpoint);
+      if (code === 404 || code === 410) unsubscribePush(subs[s].endpoint); // subscription expired
+    } catch (e) { /* one bad endpoint shouldn't stop the rest */ }
+  }
+}
+function installMaturityReminders() {
+  removeMaturityReminders();
+  ScriptApp.newTrigger('sendMaturityPush').timeBased().atHour(10).everyDays(1).create();
+}
+function removeMaturityReminders() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'sendMaturityPush') ScriptApp.deleteTrigger(t);
+  });
 }

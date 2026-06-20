@@ -139,6 +139,47 @@ each change.
 > version** (Deploy → Manage deployments → ✏ → New version → Deploy),
 > otherwise changes won't be logged and Undo won't work.
 
+## Maturity reminders (push notifications) — optional
+
+Get a phone notification **2 days before, 1 day before, and on the maturity
+date**, around **10 AM IST**, on the installed app. It works by a daily Apps
+Script trigger that sends a Web Push to each device that has opted in. The
+notification is deliberately generic ("a fixed deposit is maturing soon — tap
+to open") so no amounts ever land on a lock screen; tap it to open the app and
+see which FDs in the password-protected dashboard.
+
+One-time setup:
+
+1. **Generate VAPID keys.** In the Apps Script editor, select the function
+   `generateVapidKeys` and **Run**. Open **View → Logs**; it prints
+   `VAPID_PUBLIC = …` and `VAPID_PRIVATE = …`.
+2. **Project Settings → Script Properties**, add three properties:
+   - `VAPID_PUBLIC` = the printed public value
+   - `VAPID_PRIVATE` = the printed private value
+   - `VAPID_SUBJECT` = `mailto:you@example.com` (any contact email)
+3. **Set the timezone to IST.** Project Settings → **Time zone → (GMT+05:30)
+   India Standard Time**. The 10 AM trigger fires in this timezone.
+4. **Install the daily trigger.** Select the function `installMaturityReminders`
+   and **Run** once (authorize if asked). It creates a single daily trigger for
+   `sendMaturityPush` at ~10 AM. (To stop reminders entirely, run
+   `removeMaturityReminders`.)
+5. **Re-deploy** the web app as a **new version** (so the new `subscribe`
+   action is live).
+6. On each phone, open the installed app and tap **Enable reminders** in the
+   top bar, then allow notifications. That device is now subscribed. A
+   `PushSubs` tab appears in the sheet listing subscribed devices.
+
+Notes & limits:
+- Works well on **Android** (Chrome / installed PWA). On **iPhone/iPad** it
+  needs iOS **16.4+** and the app must be added to the Home Screen; Apple's
+  web-push is a bit less reliable.
+- Apps Script time triggers fire within ~15 minutes of the hour, so it's
+  "around 10 AM IST", not to the exact minute.
+- A device stays subscribed until you tap **Enable reminders** again to turn it
+  off (it toggles), or the browser drops the subscription (the server prunes
+  dead ones automatically).
+- It only pushes on days when something is actually due, so no daily spam.
+
 ## Adding rows by hand later
 
 The app is the comfortable way to add FDs, but editing the sheet directly is
