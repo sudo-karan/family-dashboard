@@ -40,9 +40,11 @@ added.
 - **Maturity reminders (push)** — optional phone notifications 2 days before,
   1 day before, and on the maturity date (~10 AM IST), delivered to the
   installed PWA via Web Push from a daily Apps Script trigger. The push is
-  payload-less (no amounts on the lock screen). VAPID JWTs are signed by a
-  pure-BigInt ES256 implementation in `Code.gs` (Apps Script has no native
-  ECDSA), validated against Node's crypto in the tests. See SETUP.md.
+  payload-less (no amounts on the lock screen). A **Reminders** tab turns it on
+  per device and lists every subscribed device (by name) with an unsubscribe
+  button. VAPID JWTs are signed by a pure-ES5 ES256 implementation in `Code.gs`
+  (Apps Script has neither native ECDSA nor BigInt), validated against Node's
+  crypto in the tests. See SETUP.md.
 - **Google Sheets is the database** — the family can keep editing the sheet
   directly; the app and the sheet never fight.
 

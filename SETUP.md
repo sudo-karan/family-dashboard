@@ -165,9 +165,11 @@ One-time setup:
    `removeMaturityReminders`.)
 5. **Re-deploy** the web app as a **new version** (so the new `subscribe`
    action is live).
-6. On each phone, open the installed app and tap **Enable reminders** in the
-   top bar, then allow notifications. That device is now subscribed. A
-   `PushSubs` tab appears in the sheet listing subscribed devices.
+6. On each phone, open the installed app, go to the **Reminders** tab, tap
+   **Enable on this device**, and allow notifications. That device is now
+   subscribed. The **Reminders** tab also lists every subscribed device (by the
+   "Device name" entered at sign-in) with an **Unsubscribe** button, and a
+   `PushSubs` tab appears in the sheet with the same list.
 
 Notes & limits:
 - Works well on **Android** (Chrome / installed PWA). On **iPhone/iPad** it

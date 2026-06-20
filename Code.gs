@@ -117,10 +117,12 @@ function doPost(e) {
       undoLog(req.logId);
     } else if (action === 'subscribe') {
       subscribePush(req.subscription, CURRENT_DEVICE);
-      return jsonOut({ ok: true });
+      SpreadsheetApp.flush();
+      return jsonOut({ ok: true, pushSubs: readSubsPublic() });
     } else if (action === 'unsubscribe') {
       unsubscribePush(req.endpoint);
-      return jsonOut({ ok: true });
+      SpreadsheetApp.flush();
+      return jsonOut({ ok: true, pushSubs: readSubsPublic() });
     } else {
       return jsonOut({ ok: false, error: 'unknown action: ' + action });
     }
@@ -131,7 +133,8 @@ function doPost(e) {
     SpreadsheetApp.flush();
     return jsonOut({
       ok: true, fds: readFds(), accounts: readAccounts(), log: readLog(15),
-      vapidPublic: PropertiesService.getScriptProperties().getProperty('VAPID_PUBLIC') || ''
+      vapidPublic: PropertiesService.getScriptProperties().getProperty('VAPID_PUBLIC') || '',
+      pushSubs: readSubsPublic()
     });
   } catch (err) {
     return jsonOut({ ok: false, error: String(err && err.message ? err.message : err) });
@@ -1000,6 +1003,28 @@ function readSubs() {
   var v = sheet.getRange(2, 1, lastRow - 1, PUSH_HEADERS.length).getValues();
   var out = [];
   for (var r = 0; r < v.length; r++) { if (v[r][0]) out.push({ endpoint: String(v[r][0]), p256dh: String(v[r][1]), auth: String(v[r][2]), row: r + 2 }); }
+  return out;
+}
+/** Subscriptions for display in the app (no push keys). Never creates the
+ *  sheet, so unrelated logins don't spawn an empty PushSubs tab. */
+function readSubsPublic() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(PUSH_SHEET);
+  if (!sheet) return [];
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var tz = ss.getSpreadsheetTimeZone();
+  var v = sheet.getRange(2, 1, lastRow - 1, PUSH_HEADERS.length).getValues();
+  var out = [];
+  for (var r = 0; r < v.length; r++) {
+    if (!v[r][0]) continue;
+    var added = v[r][4];
+    out.push({
+      endpoint: String(v[r][0]),
+      device: String(v[r][3] || ''),
+      added: added instanceof Date ? Utilities.formatDate(added, tz, 'yyyy-MM-dd') : String(added || '')
+    });
+  }
   return out;
 }
 function subscribePush(sub, device) {
