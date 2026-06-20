@@ -37,6 +37,12 @@ added.
   account in a read-only form showing exactly what was recorded, and the
   latest change to any item can be undone — a deleted FD comes back with the
   same ID, an edit reverts to its previous values.
+- **Maturity reminders (push)** — optional phone notifications 2 days before,
+  1 day before, and on the maturity date (~10 AM IST), delivered to the
+  installed PWA via Web Push from a daily Apps Script trigger. The push is
+  payload-less (no amounts on the lock screen). VAPID JWTs are signed by a
+  pure-BigInt ES256 implementation in `Code.gs` (Apps Script has no native
+  ECDSA), validated against Node's crypto in the tests. See SETUP.md.
 - **Google Sheets is the database** — the family can keep editing the sheet
   directly; the app and the sheet never fight.
 
