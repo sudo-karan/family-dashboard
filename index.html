@@ -99,8 +99,8 @@
   .mode-badge{ font-size:10.5px; font-weight:800; letter-spacing:1px; border-radius:6px; padding:3px 8px; }
   .mode-badge.demo{ background:var(--amber-soft); color:var(--amber); }
   .mode-badge.live{ background:var(--accent-soft); color:var(--accent-ink); }
-  .tabs{ display:flex; background:var(--surface-2); border:1px solid var(--line-2); border-radius:10px; padding:3px; gap:2px; }
-  .tab-btn{ border:0; background:transparent; border-radius:8px; padding:6px 14px; font-weight:650; font-size:14px; color:var(--muted); }
+  .tabs{ display:flex; background:var(--surface-2); border:1px solid var(--line-2); border-radius:10px; padding:3px; gap:2px; max-width:100%; overflow-x:auto; }
+  .tab-btn{ border:0; background:transparent; border-radius:8px; padding:6px 14px; font-weight:650; font-size:14px; color:var(--muted); flex:none; white-space:nowrap; }
   .tab-btn.on{ background:var(--surface); color:var(--ink); box-shadow:0 1px 2px rgba(20,48,43,.08); }
   .topbar-actions{ margin-left:auto; display:flex; gap:8px; align-items:center; }
 
@@ -135,6 +135,15 @@
   .soon-amts{ flex:none; }
   .soon-mat{ display:block; font-weight:700; font-variant-numeric:tabular-nums; }
   .soon-pr{ display:block; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+
+  /* reminders tab */
+  .reminders-status{ display:flex; align-items:center; gap:12px; padding:14px 18px; flex-wrap:wrap; }
+  .reminders-status .btn{ margin-left:auto; }
+  .rem-status-text{ flex:1 1 220px; font-size:14px; }
+  .rem-dot{ width:10px; height:10px; border-radius:50%; flex:none; background:var(--muted); }
+  .rem-dot.on{ background:var(--accent); }
+  .rem-dot.bad{ background:var(--red); }
+  .rem-dot.off{ background:var(--muted); }
 
   .log-row{ display:flex; align-items:center; gap:12px; padding:10px 18px; border-bottom:1px solid var(--line-2); }
   .log-row:last-child{ border-bottom:0; }
@@ -885,6 +894,11 @@ async function getPushSubscription(){
   return reg.pushManager.getSubscription();
 }
 
+async function thisDeviceEndpoint(){
+  const sub = await getPushSubscription();
+  return sub ? sub.endpoint : '';
+}
+
 async function enablePush(vapidPublic, device){
   if (!PUSH_SUPPORTED) throw new Error('this device/browser does not support notifications');
   if (!vapidPublic) throw new Error('reminders aren’t set up on the server yet (VAPID keys missing — see SETUP.md)');
@@ -900,17 +914,23 @@ async function enablePush(vapidPublic, device){
       applicationServerKey: urlB64ToUint8Array(vapidPublic)
     });
   }
-  await postApi({ action: 'subscribe', password: pushAuth(), device: device || FDPrefs.getDevice(),
+  return postApi({ action: 'subscribe', password: pushAuth(), device: device || FDPrefs.getDevice(),
     subscription: sub.toJSON() });
-  return true;
 }
 
+/* turn off this device: drop its browser subscription, then remove it server-side */
 async function disablePush(){
   const sub = await getPushSubscription();
-  if (!sub) return;
+  if (!sub) return postApi({ action: 'unsubscribe', password: pushAuth(), endpoint: '' });
   const endpoint = sub.endpoint;
   try { await sub.unsubscribe(); } catch (e) { /* best effort */ }
-  await postApi({ action: 'unsubscribe', password: pushAuth(), endpoint: endpoint });
+  return postApi({ action: 'unsubscribe', password: pushAuth(), endpoint: endpoint });
+}
+
+/* remove any device from the list by its endpoint (used by the Unsubscribe
+ * button next to each device on the Reminders tab) */
+async function unsubscribeEndpoint(endpoint){
+  return postApi({ action: 'unsubscribe', password: pushAuth(), endpoint: endpoint });
 }
 
 /* the shared password, captured after login so push helpers can authenticate */
@@ -1197,6 +1217,74 @@ function RecentChanges({ log, onUndo, onView }){
           <div key={e.id} className="log-row">{inner}</div>
         );
       })}
+    </div>
+  );
+}
+
+/* ============================== reminders tab ============================== */
+function RemindersView({ pushSubs, pushState, thisEndpoint, busy, onEnable, onDisable, onUnsubscribe }){
+  const subs = pushSubs || [];
+  const statusLine = {
+    on: 'Reminders are ON for this device.',
+    off: 'Reminders are off on this device.',
+    denied: 'Notifications are blocked for this site — allow them in your browser settings, then reload.',
+    unsupported: 'This device or browser can’t show push notifications (on iPhone, add the app to your Home Screen first, iOS 16.4+).',
+    busy: 'Working…'
+  }[pushState] || '';
+  return (
+    <div>
+      <div className="panel">
+        <div className="panel-head">
+          <div className="panel-title">Maturity reminders</div>
+          <div className="panel-sub">A phone notification 2 days before, 1 day before, and on the maturity date (around 10 AM IST). Turn it on once per device.</div>
+        </div>
+        <div className="reminders-status">
+          <span className={'rem-dot ' + (pushState === 'on' ? 'on' : pushState === 'denied' ? 'bad' : 'off')} aria-hidden="true" />
+          <span className="rem-status-text">{statusLine}</span>
+          {pushState === 'on' ? (
+            <button type="button" className="btn" disabled={busy} onClick={onDisable}>Turn off on this device</button>
+          ) : pushState === 'off' ? (
+            <button type="button" className="btn primary" disabled={busy} onClick={onEnable}>Enable on this device</button>
+          ) : pushState === 'busy' ? (
+            <button type="button" className="btn" disabled={true}>Working…</button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <div className="panel-title">Subscribed devices</div>
+          <div className="panel-sub">Every device that will receive reminders. Names come from the “Device name” entered at sign-in.</div>
+        </div>
+        {subs.length === 0 ? (
+          <div className="panel-empty">No devices subscribed yet — tap “Enable on this device” above.</div>
+        ) : (
+         <div className="mini-scroll">
+          <table className="mini-table">
+            <thead><tr><th>Device</th><th>Subscribed</th><th aria-label="Actions"></th></tr></thead>
+            <tbody>
+              {subs.map(function(s){
+                const isThis = thisEndpoint && s.endpoint === thisEndpoint;
+                return (
+                  <tr key={s.endpoint}>
+                    <td>
+                      <span className="share-name">{s.device ? s.device : 'Unnamed device'}</span>
+                      {isThis ? <span className="pill green" style={{ marginLeft:8 }}>this device</span> : null}
+                      <div className="cell-sub" style={{ whiteSpace:'normal', wordBreak:'break-all', maxWidth:260 }}>…{String(s.endpoint).slice(-22)}</div>
+                    </td>
+                    <td className="date-cell">{M.fmtDate(s.added)}</td>
+                    <td className="row-actions" style={{ textAlign:'right' }}>
+                      <button type="button" className="btn danger-ghost small" disabled={busy}
+                              onClick={function(){ onUnsubscribe(s); }}>Unsubscribe</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+         </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2070,7 +2158,7 @@ function ConfirmDialog({ title, lines, confirmLabel, danger, busy, onConfirm, on
 
 /* ============================== app shell ============================== */
 function App(){
-  const TABS = { dashboard:1, all:1, accounts:1, history:1 };
+  const TABS = { dashboard:1, all:1, accounts:1, history:1, reminders: LIVE ? 1 : 0 };
   const [auth, setAuth] = useState(null);
   const [data, setData] = useState(null);
   const [tab, setTab] = useState(function(){ const t = FDPrefs.getTab(); return TABS[t] ? t : 'dashboard'; });
@@ -2085,6 +2173,7 @@ function App(){
   const [toast, setToast] = useState(null); /* {msg, kind:'success'|'error'} */
   const [theme, setThemeState] = useState(function(){ return FDPrefs.getTheme(); });
   const [pushState, setPushState] = useState('off'); /* 'unsupported'|'off'|'on'|'denied'|'busy' */
+  const [thisEndpoint, setThisEndpoint] = useState(''); /* this device's push endpoint, if subscribed */
   /* true while trying the sign-in remembered on this device */
   const [boot, setBoot] = useState(function(){ return !!FDPrefs.getAuth(); });
 
@@ -2108,7 +2197,7 @@ function App(){
     (async function(){
       try {
         const j = await postApi({ action:'list', password: pw });
-        setData({ fds: j.fds, accounts: j.accounts, log: j.log || [], vapidPublic: j.vapidPublic || '' });
+        setData({ fds: j.fds, accounts: j.accounts, log: j.log || [], vapidPublic: j.vapidPublic || '', pushSubs: j.pushSubs || [] });
         setAuth({ password: pw });
         setPushAuth(pw);
       } catch (e) {
@@ -2127,18 +2216,23 @@ function App(){
   function notifyOk(msg){ setToast({ msg: msg, kind: 'success' }); }
   function notifyError(msg){ setToast({ msg: msg, kind: 'error' }); }
 
-  /* reflect the current reminder state once signed in */
+  /* reflect the current reminder state + this device's endpoint once signed in */
   useEffect(function(){
     if (!auth) return;
+    thisDeviceEndpoint().then(function(ep){ setThisEndpoint(ep); }).catch(function(){});
     if (!LIVE || !PUSH_SUPPORTED){ setPushState('unsupported'); return; }
     if (typeof Notification !== 'undefined' && Notification.permission === 'denied'){ setPushState('denied'); return; }
     getPushSubscription().then(function(sub){ setPushState(sub ? 'on' : 'off'); }).catch(function(){ setPushState('off'); });
   }, [auth]);
 
+  function applyPushSubs(j){ if (j && j.pushSubs) setData(function(d){ return Object.assign({}, d, { pushSubs: j.pushSubs }); }); }
+
   async function enableReminders(){
     setPushState('busy');
     try {
-      await enablePush(data && data.vapidPublic, FDPrefs.getDevice());
+      const j = await enablePush(data && data.vapidPublic, FDPrefs.getDevice());
+      applyPushSubs(j);
+      setThisEndpoint(await thisDeviceEndpoint());
       setPushState('on');
       notifyOk('Maturity reminders on for this device');
     } catch (e) {
@@ -2149,12 +2243,24 @@ function App(){
   async function disableReminders(){
     setPushState('busy');
     try {
-      await disablePush();
+      const j = await disablePush();
+      applyPushSubs(j);
+      setThisEndpoint('');
       notifyOk('Reminders turned off on this device');
     } catch (e) {
       notifyError('Could not turn off: ' + e.message);
     } finally {
       setPushState('off');
+    }
+  }
+  async function unsubscribeDevice(s){
+    try {
+      const j = await unsubscribeEndpoint(s.endpoint);
+      applyPushSubs(j);
+      if (thisEndpoint && s.endpoint === thisEndpoint){ setThisEndpoint(''); setPushState('off'); }
+      notifyOk('Removed ' + (s.device ? '“' + s.device + '”' : 'that device'));
+    } catch (e) {
+      notifyError('Could not remove: ' + e.message);
     }
   }
 
@@ -2180,7 +2286,7 @@ function App(){
       const j = await postApi({ action:'list', password: pw });
       FDPrefs.setAuth(pw); /* remember on this device until Sign out */
       FDPrefs.setDevice(deviceName || '');
-      setData({ fds: j.fds, accounts: j.accounts, log: j.log || [], vapidPublic: j.vapidPublic || '' });
+      setData({ fds: j.fds, accounts: j.accounts, log: j.log || [], vapidPublic: j.vapidPublic || '', pushSubs: j.pushSubs || [] });
       setAuth({ password: pw });
       setPushAuth(pw);
     } catch (e) {
@@ -2205,7 +2311,7 @@ function App(){
       const fullBody = Object.assign({}, body, { device: FDPrefs.getDevice() });
       if (LIVE){
         const j = await postApi(Object.assign({}, fullBody, { password: auth.password }));
-        setData({ fds: j.fds, accounts: j.accounts, log: j.log || [], vapidPublic: j.vapidPublic || '' });
+        setData({ fds: j.fds, accounts: j.accounts, log: j.log || [], vapidPublic: j.vapidPublic || '', pushSubs: j.pushSubs || [] });
       } else {
         setData(demoMutate(data, fullBody)); /* throws on guard violations, like the backend */
       }
@@ -2346,7 +2452,7 @@ function App(){
     setRefreshing(true);
     try {
       const j = await postApi({ action:'list', password: auth.password });
-      setData({ fds: j.fds, accounts: j.accounts, log: j.log || [], vapidPublic: j.vapidPublic || '' });
+      setData({ fds: j.fds, accounts: j.accounts, log: j.log || [], vapidPublic: j.vapidPublic || '', pushSubs: j.pushSubs || [] });
       notifyOk('Refreshed');
     } catch (e) {
       notifyError('Refresh failed: ' + e.message);
@@ -2404,6 +2510,10 @@ function App(){
                   onClick={function(){ switchTab('accounts'); }}>Accounts</button>
           <button type="button" className={'tab-btn' + (tab === 'history' ? ' on' : '')}
                   onClick={function(){ switchTab('history'); }}>History</button>
+          {LIVE && (
+            <button type="button" className={'tab-btn' + (tab === 'reminders' ? ' on' : '')}
+                    onClick={function(){ switchTab('reminders'); }}>Reminders</button>
+          )}
         </nav>
         <div className="topbar-actions">
           <button type="button" className="btn theme-btn" onClick={toggleTheme}
@@ -2414,14 +2524,6 @@ function App(){
             <button type="button" className="btn" title="Reload from the Google Sheet"
                     onClick={refresh} disabled={refreshing} aria-busy={refreshing}>
               <span className={'spin-icon' + (refreshing ? ' spinning' : '')} aria-hidden="true">↻</span> Refresh
-            </button>
-          )}
-          {LIVE && pushState !== 'unsupported' && (
-            <button type="button" className="btn"
-                    title="Get a phone notification before an FD matures (2 days, 1 day, and on the day, ~10 AM IST)"
-                    disabled={pushState === 'busy'}
-                    onClick={pushState === 'on' ? disableReminders : (pushState === 'denied' ? function(){ notifyError('Notifications are blocked for this site — allow them in your browser settings, then try again.'); } : enableReminders)}>
-              {pushState === 'on' ? 'Reminders: on' : pushState === 'busy' ? 'Reminders…' : pushState === 'denied' ? 'Reminders blocked' : 'Enable reminders'}
             </button>
           )}
           <button type="button" className="btn primary" onClick={function(){ setEditing('new'); }}>＋ Add FD</button>
@@ -2447,6 +2549,9 @@ function App(){
                 onTransfer={function(a){ setTransferring({ account: a, forceOut: false }); }}
                 onDelete={handleAccountDelete} />}
         {tab === 'history' && <RecentChanges log={data.log || []} onUndo={handleUndo} onView={function(e){ setViewing(e); }} />}
+        {tab === 'reminders' && <RemindersView pushSubs={data.pushSubs || []} pushState={pushState}
+                thisEndpoint={thisEndpoint} busy={pushState === 'busy'}
+                onEnable={enableReminders} onDisable={disableReminders} onUnsubscribe={unsubscribeDevice} />}
       </main>
 
       {editing !== null && (
