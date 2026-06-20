@@ -711,9 +711,9 @@ function undoLog(logId) {
 //  Sends a payload-less push (no FD details on the lock screen — privacy)
 //  when an Active FD matures in 2 days, 1 day, or today, IST. Driven by a
 //  daily time trigger around 10:00 in the project's timezone (set it to
-//  Asia/Kolkata — see SETUP.md). VAPID JWTs are signed with the pure-BigInt
-//  ES256 implementation below (Apps Script has no native ECDSA); the same
-//  algorithm is validated against Node's crypto in the repo's tests.
+//  Asia/Kolkata — see SETUP.md). VAPID JWTs are signed with the pure ES5
+//  ES256 implementation below (Apps Script has no native ECDSA and no BigInt);
+//  the same algorithm is validated against Node's crypto in the repo's tests.
 // ===================================================================
 
 var PUSH_SHEET = 'PushSubs';
@@ -728,52 +728,226 @@ function gsHmac(keyU, msgU) { return toUnsigned(Utilities.computeHmacSha256Signa
 function b64urlEncodeBytes(u) { return Utilities.base64EncodeWebSafe(toSigned(u)).replace(/=+$/, ''); }
 function b64urlDecodeBytes(s) { return toUnsigned(Utilities.base64DecodeWebSafe(s)); }
 
-/* ---- pure-BigInt P-256 ECDSA (ES256), no native crypto needed ---- */
+/* ---- pure ES5 P-256 ECDSA (ES256) — Apps Script has no BigInt; big ints
+ * are 16-bit limb arrays. Validated against Node crypto in es256_es5.test.js. ---- */
 var ES256 = (function () {
-  var p = 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffffn;
-  var a = p - 3n;
-  var n = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
-  var Gx = 0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296n;
-  var Gy = 0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5n;
-  function mod(x, m) { var r = x % m; return r < 0n ? r + m : r; }
-  function modInv(x, m) {
-    var lo = mod(x, m), hi = m, a0 = 1n, a1 = 0n;
-    while (lo > 0n) { var q = hi / lo; var t = hi - q * lo; hi = lo; lo = t; t = a1 - q * a0; a1 = a0; a0 = t; }
-    return mod(a1, m);
+  // limbs: little-endian 16-bit. value = sum limb[i] * 65536^i
+  function norm(a) { while (a.length > 1 && a[a.length - 1] === 0) a.pop(); return a; }
+  function isZero(a) { return a.length === 1 && a[0] === 0; }
+  function cmp(a, b) {
+    if (a.length !== b.length) return a.length < b.length ? -1 : 1;
+    for (var i = a.length - 1; i >= 0; i--) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+    return 0;
   }
-  function add(P, Q) {
-    if (!P) return Q; if (!Q) return P;
-    var x1 = P[0], y1 = P[1], x2 = Q[0], y2 = Q[1];
-    if (x1 === x2 && mod(y1 + y2, p) === 0n) return null;
-    var m;
-    if (x1 === x2 && y1 === y2) m = mod((3n * x1 * x1 + a) * modInv(2n * y1, p), p);
-    else m = mod((y2 - y1) * modInv(mod(x2 - x1, p), p), p);
-    var x3 = mod(m * m - x1 - x2, p);
-    return [x3, mod(m * (x1 - x3) - y1, p)];
+  function add(a, b) {
+    var r = [], c = 0, n = Math.max(a.length, b.length);
+    for (var i = 0; i < n; i++) { var s = (a[i] || 0) + (b[i] || 0) + c; r[i] = s & 0xffff; c = s >>> 16; }
+    if (c) r[i] = c;
+    return r;
   }
-  function mul(k, P) { var R = null, A = P; while (k > 0n) { if (k & 1n) R = add(R, A); A = add(A, A); k >>= 1n; } return R; }
-  function bytesToBig(b) { var x = 0n; for (var i = 0; i < b.length; i++) x = (x << 8n) | BigInt(b[i]); return x; }
-  function bigTo32(x) { var o = new Array(32); for (var i = 31; i >= 0; i--) { o[i] = Number(x & 0xffn); x >>= 8n; } return o; }
-  function rfc6979k(h, x, hmac) {
-    var z2 = bigTo32(mod(bytesToBig(h), n));
-    var V = []; for (var i = 0; i < 32; i++) V.push(0x01);
-    var K = []; for (var j = 0; j < 32; j++) K.push(0x00);
+  function sub(a, b) { // assumes a >= b
+    var r = [], br = 0;
+    for (var i = 0; i < a.length; i++) {
+      var s = a[i] - (b[i] || 0) - br;
+      if (s < 0) { s += 0x10000; br = 1; } else br = 0;
+      r[i] = s;
+    }
+    return norm(r);
+  }
+  function mul(a, b) {
+    var r = []; for (var i = 0; i < a.length + b.length; i++) r[i] = 0;
+    for (i = 0; i < a.length; i++) {
+      var c = 0, ai = a[i];
+      for (var j = 0; j < b.length; j++) { var s = ai * b[j] + r[i + j] + c; r[i + j] = s & 0xffff; c = Math.floor(s / 0x10000); }
+      var k = i + b.length;
+      while (c) { var s2 = (r[k] || 0) + c; r[k] = s2 & 0xffff; c = Math.floor(s2 / 0x10000); k++; }
+    }
+    return norm(r);
+  }
+  function shl1(a) {
+    var r = [], c = 0;
+    for (var i = 0; i < a.length; i++) { var v = (a[i] << 1) | c; r[i] = v & 0xffff; c = (v >>> 16) & 1; }
+    if (c) r[i] = c;
+    return r;
+  }
+  function bitLength(a) {
+    var i = a.length - 1; while (i > 0 && a[i] === 0) i--;
+    var w = a[i], b = 0; while (w) { w >>>= 1; b++; }
+    return i * 16 + b;
+  }
+  function testBit(a, i) { var limb = i >> 4, off = i & 15; return ((a[limb] || 0) >> off) & 1; }
+
+  function fromBytes(bytes) { // big-endian byte array -> limbs
+    var r = [0], k = 0;
+    for (var i = bytes.length - 1; i >= 0; i--) {
+      var li = k >> 1;
+      if (k & 1) r[li] = (r[li] || 0) | ((bytes[i] & 0xff) << 8);
+      else r[li] = (bytes[i] & 0xff);
+      k++;
+    }
+    return norm(r);
+  }
+  function to32Bytes(a) {
+    var out = []; for (var i = 0; i < 32; i++) out[i] = 0;
+    for (var li = 0; li < a.length; li++) {
+      var lo = a[li] & 0xff, hi = (a[li] >> 8) & 0xff;
+      var pos = 31 - li * 2;
+      if (pos >= 0) out[pos] = lo;
+      if (pos - 1 >= 0) out[pos - 1] = hi;
+    }
+    return out;
+  }
+
+  // curve constants as limb arrays
+  var P = fromBytes(hexBytes('ffffffff00000001000000000000000000000000ffffffffffffffffffffffff'));
+  var N = fromBytes(hexBytes('ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551'));
+  var Gx = fromBytes(hexBytes('6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296'));
+  var Gy = fromBytes(hexBytes('4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5'));
+  var P_M2 = sub(P, [2]);
+  var N_M2 = sub(N, [2]);
+  function hexBytes(h) { var b = []; for (var i = 0; i < h.length; i += 2) b.push(parseInt(h.substr(i, 2), 16)); return b; }
+
+  // NIST P-256 fast reduction of a product (<= 512 bits) mod P
+  function word(a, i) { return (a[2 * i] || 0) + (a[2 * i + 1] || 0) * 65536; } // 32-bit word i
+  function fromWords(w) { // w[0]=most significant ... w[7]=least significant (8 words = 256 bits)
+    var r = [];
+    for (var pos = 0; pos < 8; pos++) {
+      var val = w[7 - pos]; // limb position pos <-> word (7-pos)
+      r[2 * pos] = val & 0xffff;
+      r[2 * pos + 1] = Math.floor(val / 65536) & 0xffff;
+    }
+    return norm(r);
+  }
+  function reduceP(prod) {
+    var c = [];
+    for (var i = 0; i < 16; i++) c[i] = word(prod, i);
+    var s1 = fromWords([c[7], c[6], c[5], c[4], c[3], c[2], c[1], c[0]]);
+    var s2 = fromWords([c[15], c[14], c[13], c[12], c[11], 0, 0, 0]);
+    var s3 = fromWords([0, c[15], c[14], c[13], c[12], 0, 0, 0]);
+    var s4 = fromWords([c[15], c[14], 0, 0, 0, c[10], c[9], c[8]]);
+    var s5 = fromWords([c[8], c[13], c[15], c[14], c[13], c[11], c[10], c[9]]);
+    var s6 = fromWords([c[10], c[8], 0, 0, 0, c[13], c[12], c[11]]);
+    var s7 = fromWords([c[11], c[9], 0, 0, c[15], c[14], c[13], c[12]]);
+    var s8 = fromWords([c[12], 0, c[10], c[9], c[8], c[15], c[14], c[13]]);
+    var s9 = fromWords([c[13], 0, c[11], c[10], c[9], 0, c[15], c[14]]);
+    var t = s1;
+    t = add(t, shl1(s2)); t = add(t, shl1(s3)); t = add(t, s4); t = add(t, s5);
+    var negs = [s6, s7, s8, s9];
+    for (var k = 0; k < 4; k++) { while (cmp(t, negs[k]) < 0) t = add(t, P); t = sub(t, negs[k]); }
+    while (cmp(t, P) >= 0) t = sub(t, P);
+    return norm(t);
+  }
+
+  // generic mod (binary long division), used for mod N
+  function mod(a, m) {
+    if (cmp(a, m) < 0) return a.slice();
+    var r = [0], bl = bitLength(a);
+    for (var i = bl - 1; i >= 0; i--) {
+      r = shl1(r);
+      if (testBit(a, i)) r[0] |= 1;
+      if (cmp(r, m) >= 0) r = sub(r, m);
+    }
+    return norm(r);
+  }
+
+  // field (mod P) helpers
+  function fAdd(a, b) { var t = add(a, b); if (cmp(t, P) >= 0) t = sub(t, P); return t; }
+  function fSub(a, b) { return cmp(a, b) >= 0 ? sub(a, b) : sub(add(a, P), b); }
+  function fMul(a, b) { return reduceP(mul(a, b)); }
+  function modPow(base, exp, m, mulmod) {
+    var r = [1], b = mod(base, m), bl = bitLength(exp);
+    for (var i = 0; i < bl; i++) { if (testBit(exp, i)) r = mulmod(r, b); b = mulmod(b, b); }
+    return r;
+  }
+  function fInv(a) { return modPow(a, P_M2, P, fMul); }
+  function nMul(a, b) { return mod(mul(a, b), N); }
+  function nInv(a) { return modPow(a, N_M2, N, nMul); }
+
+  // Jacobian point ops mod P. Point = [X,Y,Z]; infinity has Z = [0].
+  function jDouble(Pt) {
+    var X1 = Pt[0], Y1 = Pt[1], Z1 = Pt[2];
+    if (isZero(Y1) || isZero(Z1)) return [[1], [1], [0]];
+    var A = fMul(Y1, Y1);
+    var B = fMul(X1, A); B = fAdd(B, B); B = fAdd(B, B);          // 4*X1*A
+    var C = fMul(A, A); C = fAdd(C, C); C = fAdd(C, C); C = fAdd(C, C); // 8*A^2
+    var ZZ = fMul(Z1, Z1);
+    // M = 3*(X1 - Z1^2)*(X1 + Z1^2)
+    var M = fMul(fSub(X1, ZZ), fAdd(X1, ZZ)); M = fAdd(fAdd(M, M), M);
+    var X3 = fSub(fSub(fMul(M, M), B), B);                       // M^2 - 2B
+    var Y3 = fSub(fMul(M, fSub(B, X3)), C);                      // M*(B - X3) - C
+    var Z3 = fMul(fAdd(Y1, Y1), Z1);                             // 2*Y1*Z1
+    return [X3, Y3, Z3];
+  }
+  function jAdd(Pa, Pb) {
+    if (isZero(Pa[2])) return Pb;
+    if (isZero(Pb[2])) return Pa;
+    var X1 = Pa[0], Y1 = Pa[1], Z1 = Pa[2], X2 = Pb[0], Y2 = Pb[1], Z2 = Pb[2];
+    var Z1Z1 = fMul(Z1, Z1), Z2Z2 = fMul(Z2, Z2);
+    var U1 = fMul(X1, Z2Z2), U2 = fMul(X2, Z1Z1);
+    var S1 = fMul(fMul(Y1, Z2), Z2Z2), S2 = fMul(fMul(Y2, Z1), Z1Z1);
+    if (cmp(U1, U2) === 0) { if (cmp(S1, S2) !== 0) return [[1], [1], [0]]; return jDouble(Pa); }
+    var H = fSub(U2, U1);
+    var I = fMul(fAdd(H, H), fAdd(H, H));
+    var J = fMul(H, I);
+    var r = fAdd(fSub(S2, S1), fSub(S2, S1));
+    var V = fMul(U1, I);
+    var X3 = fSub(fSub(fSub(fMul(r, r), J), V), V);
+    var Y3 = fSub(fMul(r, fSub(V, X3)), fAdd(fMul(S1, J), fMul(S1, J)));
+    var Z3 = fMul(fSub(fSub(fMul(fAdd(Z1, Z2), fAdd(Z1, Z2)), Z1Z1), Z2Z2), H);
+    return [X3, Y3, Z3];
+  }
+  function jMul(k, Pt) {
+    var R = [[1], [1], [0]], bl = bitLength(k);
+    for (var i = bl - 1; i >= 0; i--) { R = jDouble(R); if (testBit(k, i)) R = jAdd(R, Pt); }
+    return R;
+  }
+  function toAffine(Pt) {
+    if (isZero(Pt[2])) return null;
+    var zi = fInv(Pt[2]), zi2 = fMul(zi, zi), zi3 = fMul(zi2, zi);
+    return [fMul(Pt[0], zi2), fMul(Pt[1], zi3)];
+  }
+
+  function bytesConcat(a, b) { return a.concat(b); }
+
+  /* RFC 6979 deterministic k (hmac injected: hmac(keyBytes,msgBytes)->bytes) */
+  function rfc6979k(hBytes, dBytes, hmac) {
+    var z = mod(fromBytes(hBytes), N);
+    var z2 = to32Bytes(z), x = to32Bytes(fromBytes(dBytes));
+    var V = [], K = [];
+    for (var i = 0; i < 32; i++) { V.push(1); K.push(0); }
     K = hmac(K, V.concat([0x00], x, z2)); V = hmac(K, V);
     K = hmac(K, V.concat([0x01], x, z2)); V = hmac(K, V);
-    for (;;) { V = hmac(K, V); var k = mod(bytesToBig(V), n); if (k >= 1n && k < n) return k; K = hmac(K, V.concat([0x00])); V = hmac(K, V); }
-  }
-  function signRaw(msgBytes, dBytes, sha256, hmac) {
-    var h = sha256(msgBytes), z = mod(bytesToBig(h), n), d = bytesToBig(dBytes), r, s;
     for (;;) {
-      var k = rfc6979k(h, dBytes, hmac);
-      var Rp = mul(k, [Gx, Gy]); r = mod(Rp[0], n); if (r === 0n) continue;
-      s = mod(modInv(k, n) * mod(z + r * d, n), n); if (s === 0n) continue;
-      if (s > n / 2n) s = n - s; break;
+      V = hmac(K, V);
+      var k = fromBytes(V);
+      if (!isZero(k) && cmp(k, N) < 0) return k;
+      K = hmac(K, V.concat([0x00])); V = hmac(K, V);
     }
-    return bigTo32(r).concat(bigTo32(s));
   }
-  function publicKey(dBytes) { var Q = mul(bytesToBig(dBytes), [Gx, Gy]); return [0x04].concat(bigTo32(Q[0]), bigTo32(Q[1])); }
-  return { signRaw: signRaw, publicKey: publicKey };
+
+  /* sign message bytes -> raw 64-byte signature r||s (low-S) */
+  function signRaw(msgBytes, dBytes, sha256, hmac) {
+    var hBytes = sha256(msgBytes);
+    var z = mod(fromBytes(hBytes), N);
+    var d = fromBytes(dBytes);
+    for (;;) {
+      var k = rfc6979k(hBytes, dBytes, hmac);
+      var Raff = toAffine(jMul(k, [Gx, Gy, [1]]));
+      var r = mod(Raff[0], N);
+      if (isZero(r)) continue;
+      var s = nMul(nInv(k), mod(add(z, mod(mul(r, d), N)), N));
+      if (isZero(s)) continue;
+      if (cmp(shl1(s), N) > 0) s = sub(N, s); // low-S: s > N/2  <=> 2s > N
+      return to32Bytes(r).concat(to32Bytes(s));
+    }
+  }
+  function publicKey(dBytes) {
+    var Q = toAffine(jMul(fromBytes(dBytes), [Gx, Gy, [1]]));
+    return [0x04].concat(to32Bytes(Q[0]), to32Bytes(Q[1]));
+  }
+
+  return { signRaw: signRaw, publicKey: publicKey,
+    _internals: { fromBytes: fromBytes, to32Bytes: to32Bytes, fMul: fMul, mod: mod, fInv: fInv, nInv: nInv, mul: mul, P: P, N: N } };
 })();
 
 /** Run once in the editor; copy the two logged values into Script Properties. */
