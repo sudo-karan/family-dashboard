@@ -25,6 +25,10 @@ var LOG_SHEET = 'Log';
 var LOG_HEADERS = ['Id', 'Time', 'Device', 'Action', 'Target', 'Summary', 'Before', 'After', 'Undone'];
 // Optional device name sent with each mutation ("Dad's phone"); set per request.
 var CURRENT_DEVICE = '';
+// An Active FD whose end date is more than this many days in the past is
+// auto-archived to Inactive (see sweepMatured). Before then it stays Active
+// so it still shows as "matured Nd ago" and nudges a renew/withdraw.
+var AUTO_INACTIVE_DAYS = 15;
 
 // Canonical field order used when talking JSON to the frontend.
 var FD_FIELDS = ['id', 'account', 'accountNumber', 'startDate', 'endDate',
@@ -93,6 +97,13 @@ function doPost(e) {
     }
 
     CURRENT_DEVICE = String(req.device || '').trim().substring(0, 40);
+
+    // Self-heal on every request: archive FDs matured past the grace window.
+    // Logged as "auto", so the requester's device isn't credited for it.
+    var reqDevice = CURRENT_DEVICE;
+    CURRENT_DEVICE = 'auto';
+    try { sweepMatured(); } catch (e) { /* never let the sweep break a request */ }
+    CURRENT_DEVICE = reqDevice;
 
     var action = String(req.action || '');
     if (action === 'list') {
@@ -364,6 +375,40 @@ function deleteFd(id) {
   rawDeleteFd(id);
   appendLog('delete', 'fd:' + before.id,
     'Deleted FD #' + before.id + ' · ' + before.account + moneyBit(before), before, null);
+}
+
+/** yyyy-MM-dd -> UTC millis at midnight, or null. */
+function isoToUtc(s) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s == null ? '' : s));
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : null;
+}
+
+/** Archive Active FDs matured more than AUTO_INACTIVE_DAYS ago (IST). Runs on
+ *  every request and in the daily job; idempotent (skips non-Active rows).
+ *  Returns the number flipped. Each flip is logged and is undoable. */
+function sweepMatured() {
+  var today = isoToUtc(istDateString(0));
+  if (today === null) return 0;
+  var fds = readFds();
+  var flipped = 0;
+  for (var i = 0; i < fds.length; i++) {
+    var f = fds[i];
+    if (f.status !== 'Active') continue;
+    var end = isoToUtc(f.endDate);
+    if (end === null) continue;
+    var daysPast = Math.round((today - end) / 86400000);
+    if (daysPast > AUTO_INACTIVE_DAYS) {
+      var after = {};
+      for (var k = 0; k < FD_FIELDS.length; k++) after[FD_FIELDS[k]] = f[FD_FIELDS[k]];
+      after.status = 'Inactive';
+      after.showInDashboard = false;
+      rawUpdateFd(after);
+      appendLog('update', 'fd:' + f.id,
+        'Auto-archived FD #' + f.id + ' · ' + f.account + ' — matured ' + f.endDate, f, after);
+      flipped++;
+    }
+  }
+  return flipped;
 }
 
 function findRowById(sheet, map, id) {
@@ -1055,6 +1100,9 @@ function istDateString(offsetDays) {
 }
 /** Trigger target: push if any Active FD matures in {0,1,2} days IST. */
 function sendMaturityPush() {
+  // Also archive long-matured FDs daily, even if nobody opens the app.
+  CURRENT_DEVICE = 'auto';
+  try { sweepMatured(); } catch (e) { /* keep going to the push */ }
   if (!PropertiesService.getScriptProperties().getProperty('VAPID_PUBLIC')) return;
   var targets = {};
   targets[istDateString(0)] = 1; targets[istDateString(1)] = 1; targets[istDateString(2)] = 1;

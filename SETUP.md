@@ -139,6 +139,17 @@ each change.
 > version** (Deploy → Manage deployments → ✏ → New version → Deploy),
 > otherwise changes won't be logged and Undo won't work.
 
+## Matured deposits archive themselves
+
+Once an FD's end date passes, the app shows it as **"Matured Nd ago"** and keeps
+it in *Maturing soon* as a reminder. If nobody acts, it **auto-becomes Inactive
+15 days after maturity** (it drops off the dashboard totals). This runs
+server-side whenever the app is opened, so no setup is needed — but it does need
+the current `Code.gs` deployed. A **"Mark as done"** button (on the *Maturing
+soon* row and in *All FDs*) archives a matured FD immediately once you've
+renewed or withdrawn it; both the auto and manual archives show up in the
+change log and can be undone.
+
 ## Maturity reminders (push notifications) — optional
 
 Get a phone notification **2 days before, 1 day before, and on the maturity

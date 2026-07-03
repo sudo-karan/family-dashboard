@@ -114,6 +114,12 @@ requests that Apps Script can answer without a preflight.
   dashboard (the form disables the checkbox). `Show In Dashboard` exists so
   an *Active* FD can still be kept out of the totals (e.g. something tracked
   separately).
+- **Matured FDs auto-archive.** Once an FD's end date passes it reads
+  "Matured Nd ago" and still nudges you in *Maturing soon*; if nobody acts
+  it auto-flips to **Inactive after 15 days** (server-side, on any open or
+  the daily job — logged and undoable). A **"Mark as done"** button on the
+  *Maturing soon* row and in *All FDs* archives it instantly once you've
+  renewed or withdrawn it.
 - FD account numbers are **opaque strings** end to end — `50301262368467`,
   `000140451094222`, `NA`, `nsc 20159108247` all survive verbatim (the
   columns are plain-text formatted; the backend never parses them as

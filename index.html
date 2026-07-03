@@ -125,7 +125,7 @@
   .panel-empty{ padding:22px 18px; color:var(--muted); font-size:14px; }
 
   .soon-row{ display:flex; align-items:center; gap:14px; width:100%; text-align:left; border:0;
-    background:transparent; padding:12px 18px; border-bottom:1px solid var(--line-2); }
+    background:transparent; padding:12px 18px; border-bottom:1px solid var(--line-2); cursor:pointer; flex-wrap:wrap; }
   .soon-row:last-child{ border-bottom:0; }
   .soon-row:hover{ background:var(--surface-2); }
   .soon-pill{ flex:none; min-width:118px; text-align:center; }
@@ -133,6 +133,9 @@
   .soon-acct{ display:block; font-weight:650; font-size:14.5px; }
   .soon-meta{ display:block; font-size:12.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .soon-amts{ flex:none; }
+  .done-btn{ flex:none; min-height:40px; padding:0 14px; border-radius:9px; font-size:14px;
+    border:1.5px solid var(--accent); color:var(--accent-ink); background:var(--accent-soft); font-weight:650; }
+  .done-btn:hover{ background:var(--accent); color:#fff; }
   .soon-mat{ display:block; font-weight:700; font-variant-numeric:tabular-nums; }
   .soon-pr{ display:block; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
 
@@ -558,6 +561,25 @@ const FDMath = (function(){
 })();
 
 /* ===================================================================== *
+ *  Auto-inactivate: an Active FD whose end date is more than
+ *  AUTO_INACTIVE_DAYS in the past is archived (Inactive, off the
+ *  dashboard). Before that grace window it stays Active so it still shows
+ *  as "Matured Nd ago" and nudges a renew/withdraw. The backend runs the
+ *  same rule in Code.gs; this copy powers demo mode and the tests.
+ * ===================================================================== */
+const AUTO_INACTIVE_DAYS = 15;
+function sweepMatured(fds, todayIso, graceDays){
+  return (fds || []).map(function(f){
+    if (f.status !== 'Active' || !FDMath.parseISO(f.endDate)) return f;
+    const daysPast = FDMath.diffDays(f.endDate, todayIso); /* today − endDate */
+    if (daysPast !== null && daysPast > graceDays){
+      return Object.assign({}, f, { status: 'Inactive', showInDashboard: false });
+    }
+    return f;
+  });
+}
+
+/* ===================================================================== *
  *  Change-log helpers shared by demo mode and the UI. The backend keeps
  *  the same rules in Code.gs: an entry is undoable only while it is the
  *  latest change to its target, is not an undo itself, and is not undone.
@@ -613,7 +635,7 @@ function demoSeed(){
   const fds = [
     mk(1, 'DAD HDFC', '50300011112222', -500, 47, 7.25, 200000),
     mk(2, 'DAD HDFC', '50300033334444', -300, 247, 7.1, 50000),
-    mk(3, 'MOM SBI', '44591111222', -385, -20, 6.8, 150000, { remarks:'Renewal due' }),
+    mk(3, 'MOM SBI', '44591111222', -370, -6, 6.8, 150000, { remarks:'Renewal due' }),
     mk(4, 'MOM SBI', '44593333444', -100, 265, 7.6, 300000,
        { interestOnMaturity:false, remarks:'Quarterly interest to savings a/c' }),
     mk(5, 'RICHIE POST OFFICE', 'NA', -200, 1626, 7.5, 100000, { remarks:'5-year time deposit' }),
@@ -636,7 +658,7 @@ function demoSeed(){
       summary:'Added FD #8 · RICHIE POST OFFICE · ' + FDMath.fmtINR(fds[7].principal),
       before:null, after: Object.assign({}, fds[7]), undone:false }
   ];
-  return { accounts: accounts, fds: fds, log: annotateLog(rawLog), _rawLog: rawLog };
+  return { accounts: accounts, fds: sweepMatured(fds, today, AUTO_INACTIVE_DAYS), log: annotateLog(rawLog), _rawLog: rawLog };
 }
 
 /* Demo-mode CRUD: mirrors what Code.gs does server-side (guard violations throw,
@@ -947,6 +969,21 @@ function isOnDashboard(fd){
   return fd.status === 'Active' && !!fd.showInDashboard;
 }
 
+/* Has an Active FD's end date already passed? (the grace window before it
+ * auto-archives — where "Mark as done" and the "Matured Nd ago" label apply) */
+function isMatured(fd){
+  if (fd.status !== 'Active' || !M.parseISO(fd.endDate)) return false;
+  const d = daysFromToday(fd.endDate); /* endDate − today; negative = overdue */
+  return d !== null && d < 0;
+}
+
+/* Pill text + colour for the status cell: matured Actives read "Matured Nd ago". */
+function statusLabel(fd){
+  if (fd.status !== 'Active') return { text: 'Inactive', cls: 'gray' };
+  if (isMatured(fd)) return { text: 'Matured ' + (-daysFromToday(fd.endDate)) + 'd ago', cls: 'red' };
+  return { text: 'Active', cls: 'green' };
+}
+
 function tenureCellOf(fd){
   if (M.parseISO(fd.startDate) && M.parseISO(fd.endDate)){
     return { label: M.tenureLabel(M.diffYMD(fd.startDate, fd.endDate)), days: M.diffDays(fd.startDate, fd.endDate) };
@@ -1083,7 +1120,7 @@ function soonPill(days){
   return <span className="pill green soon-pill">in {days}d</span>;
 }
 
-function MaturingSoon({ shown, onEdit }){
+function MaturingSoon({ shown, onEdit, onMarkDone }){
   const rows = shown
     .filter(function(f){ return f.status === 'Active' && M.parseISO(f.endDate); })
     .map(function(f){ return { fd: f, days: daysFromToday(f.endDate) }; })
@@ -1093,7 +1130,7 @@ function MaturingSoon({ shown, onEdit }){
     <div className="panel">
       <div className="panel-head">
         <div className="panel-title">Maturing soon</div>
-        <div className="panel-sub">Active deposits ending within 120 days, including overdue</div>
+        <div className="panel-sub">Active deposits ending within 120 days, including overdue. Matured? Tap “Mark as done” once you’ve renewed or withdrawn it.</div>
       </div>
       {rows.length === 0 && (
         <div className="panel-empty">Nothing matures in the next 120 days. Sit back and let the interest build.</div>
@@ -1101,7 +1138,9 @@ function MaturingSoon({ shown, onEdit }){
       {rows.map(function(x){
         const f = x.fd, t = tenureCellOf(f);
         return (
-          <button type="button" key={f.id} className="soon-row" onClick={function(){ onEdit(f); }}>
+          <div key={f.id} className="soon-row" role="button" tabIndex={0}
+               onClick={function(){ onEdit(f); }}
+               onKeyDown={function(ev){ if (ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); onEdit(f); } }}>
             {soonPill(x.days)}
             <span className="soon-main">
               <span className="soon-acct">{f.account}{f.remarks ? <span className="muted small"> · {f.remarks}</span> : null}</span>
@@ -1112,7 +1151,12 @@ function MaturingSoon({ shown, onEdit }){
               {M.fmtINRWords(f.maturity) ? <span className="soon-words">{M.fmtINRWords(f.maturity)}</span> : null}
               <span className="soon-pr">on {M.fmtINR(f.principal)}</span>
             </span>
-          </button>
+            {x.days < 0 ? (
+              <button type="button" className="btn done-btn"
+                      title="Move this matured FD to Inactive"
+                      onClick={function(ev){ ev.stopPropagation(); onMarkDone(f); }}>Mark as done</button>
+            ) : null}
+          </div>
         );
       })}
     </div>
@@ -1289,7 +1333,7 @@ function RemindersView({ pushSubs, pushState, thisEndpoint, busy, onEnable, onDi
   );
 }
 
-function Dashboard({ fds, onEdit }){
+function Dashboard({ fds, onEdit, onMarkDone }){
   const [view, setView] = useState('counted'); /* 'counted' | 'hidden' */
   const counted = fds.filter(isOnDashboard);
   /* "hidden" = Active deposits deliberately kept off the dashboard
@@ -1319,7 +1363,7 @@ function Dashboard({ fds, onEdit }){
         </div>
       </div>
       <StatCards fds={fds} shown={shown} view={view} />
-      <MaturingSoon shown={shown} onEdit={onEdit} />
+      <MaturingSoon shown={shown} onEdit={onEdit} onMarkDone={onMarkDone} />
       <div className="grid-2">
         <Breakdown title="By person" rows={group(function(f){ return f.person; })} />
         <Breakdown title="By account" rows={group(function(f){ return f.account; }, function(f){ return f.person; })} />
@@ -1363,7 +1407,7 @@ const SORTS = {
   'rate-desc':     { label: 'Rate: high → low' }
 };
 
-function AllFDs({ fds, accounts, onEdit, onDelete }){
+function AllFDs({ fds, accounts, onEdit, onDelete, onMarkDone }){
   const [person, setPerson] = useState('all');
   const [account, setAccount] = useState('all');
   const [status, setStatus] = useState('all');
@@ -1486,6 +1530,7 @@ function AllFDs({ fds, accounts, onEdit, onDelete }){
             {filtered.map(function(f){
               const t = tenureCellOf(f);
               const i = interestOf(f);
+              const sl = statusLabel(f);
               return (
                 <tr key={f.id}>
                   <td><div className="cell-main">{f.account}</div><div className="cell-sub">{f.person}</div></td>
@@ -1498,11 +1543,15 @@ function AllFDs({ fds, accounts, onEdit, onDelete }){
                   <td className="num">{M.fmtINR(f.maturity || '')}{M.fmtINRWords(f.maturity) ? <div className="cell-sub cell-words">{M.fmtINRWords(f.maturity)}</div> : null}</td>
                   <td className="num">{i === null ? '—' : M.fmtINR(M.round2(i))}{i !== null && M.fmtINRWords(i) ? <div className="cell-sub cell-words">{M.fmtINRWords(M.round2(i))}</div> : null}</td>
                   <td><span className="small muted">{f.interestOnMaturity ? 'On maturity' : 'Periodic'}</span></td>
-                  <td><span className={'pill ' + (f.status === 'Active' ? 'green' : 'gray')}>{f.status}</span></td>
+                  <td><span className={'pill ' + sl.cls}>{sl.text}</span></td>
                   <td><span className={'pill ' + (isOnDashboard(f) ? 'green' : 'gray')}>{isOnDashboard(f) ? 'Shown' : 'Hidden'}</span></td>
                   <td className="remarks-cell" title={f.remarks || ''}>{f.remarks || ''}</td>
                   <td className="row-actions">
                     <button type="button" className="btn ghost small" onClick={function(){ onEdit(f); }}>Edit</button>
+                    {isMatured(f) ? (
+                      <button type="button" className="btn ghost small" title="Move this matured FD to Inactive"
+                              onClick={function(){ onMarkDone(f); }}>Mark as done</button>
+                    ) : null}
                     <button type="button" className="btn danger-ghost small" aria-label={'Delete FD ' + f.id}
                             onClick={function(){ onDelete(f); }}>Delete</button>
                   </td>
@@ -2429,6 +2478,16 @@ function App(){
     });
   }
 
+  /* "Mark as done" — one tap, no confirmation (fully reversible via History):
+     a matured FD is archived to Inactive and drops off the dashboard. */
+  function handleMarkDone(fd){
+    const payload = Object.assign({}, fd, { status: 'Inactive', showInDashboard: false });
+    delete payload.person; delete payload.bank;
+    mutate({ action: 'update', fd: payload }).then(function(ok){
+      if (ok) notifyOk('Marked FD' + (fd.accountNumber ? ' ' + fd.accountNumber : '') + ' as done — moved to Inactive');
+    });
+  }
+
   function handleUndo(entry){
     setConfirm({
       title: 'Undo this change?',
@@ -2541,8 +2600,8 @@ function App(){
       )}
 
       <main>
-        {tab === 'dashboard' && <Dashboard fds={joined} onEdit={function(f){ setEditing(f); }} />}
-        {tab === 'all' && <AllFDs fds={joined} accounts={data.accounts} onEdit={function(f){ setEditing(f); }} onDelete={handleDelete} />}
+        {tab === 'dashboard' && <Dashboard fds={joined} onEdit={function(f){ setEditing(f); }} onMarkDone={handleMarkDone} />}
+        {tab === 'all' && <AllFDs fds={joined} accounts={data.accounts} onEdit={function(f){ setEditing(f); }} onDelete={handleDelete} onMarkDone={handleMarkDone} />}
         {tab === 'accounts' && <AccountsView accounts={data.accounts} fds={joined}
                 onAdd={function(){ setAccEditing('new'); }}
                 onEdit={function(a){ setAccEditing(a); }}
