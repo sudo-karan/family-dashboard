@@ -595,8 +595,9 @@ function nowStamp(){
 function annotateLog(rawLog){
   const newestFirst = (rawLog || []).slice().reverse();
   return newestFirst.slice(0, 15).map(function(e, i){
-    /* transfers touch many rows; they're reversible by another transfer, not undo */
-    let blocked = !!e.undone || e.action === 'undo' || e.action === 'transfer';
+    /* transfers touch many rows; auto-archives would just re-archive on the
+       next sweep — neither is undoable (a manual "markDone" is). */
+    let blocked = !!e.undone || e.action === 'undo' || e.action === 'transfer' || e.action === 'autoArchive';
     for (let j = 0; j < i && !blocked; j++){
       if (newestFirst[j].target === e.target) blocked = true;
     }
@@ -701,6 +702,13 @@ function demoMutate(data, body){
     const oldFd = fds.find(function(f){ return f.id === body.id; });
     fds = fds.filter(function(f){ return f.id !== body.id; });
     if (oldFd) pushLog('delete', 'fd:' + oldFd.id, 'Deleted FD #' + oldFd.id + ' · ' + oldFd.account + moneyBit(oldFd), oldFd, null);
+  } else if (body.action === 'markDone'){
+    const oldFd = fds.find(function(f){ return f.id === body.id; });
+    if (oldFd){
+      const after = Object.assign({}, oldFd, { status: 'Inactive', showInDashboard: false });
+      fds = fds.map(function(f){ return f.id === body.id ? after : f; });
+      pushLog('markDone', 'fd:' + oldFd.id, 'Marked FD #' + oldFd.id + ' done · ' + oldFd.account + ' — matured ' + oldFd.endDate, oldFd, after);
+    }
   } else if (body.action === 'accountCreate'){
     const name = String(body.account && body.account.name || '').trim();
     if (!name) throw new Error('account name is required');
@@ -768,7 +776,7 @@ function demoMutate(data, body){
     if (entry.action === 'create'){
       if (!fds.some(function(f){ return f.id === after.id; })) throw new Error('FD with id ' + after.id + ' not found');
       fds = fds.filter(function(f){ return f.id !== after.id; });
-    } else if (entry.action === 'update'){
+    } else if (entry.action === 'update' || entry.action === 'markDone'){
       fds = fds.map(function(f){ return f.id === before.id ? Object.assign({}, before) : f; });
     } else if (entry.action === 'delete'){
       if (fds.some(function(f){ return f.id === before.id; })) throw new Error('cannot undo: FD id ' + before.id + ' exists again');
@@ -979,7 +987,7 @@ function isMatured(fd){
 
 /* Pill text + colour for the status cell: matured Actives read "Matured Nd ago". */
 function statusLabel(fd){
-  if (fd.status !== 'Active') return { text: 'Inactive', cls: 'gray' };
+  if (fd.status !== 'Active') return { text: fd.status || 'Inactive', cls: 'gray' };
   if (isMatured(fd)) return { text: 'Matured ' + (-daysFromToday(fd.endDate)) + 'd ago', cls: 'red' };
   return { text: 'Active', cls: 'green' };
 }
@@ -1139,8 +1147,8 @@ function MaturingSoon({ shown, onEdit, onMarkDone }){
         const f = x.fd, t = tenureCellOf(f);
         return (
           <div key={f.id} className="soon-row" role="button" tabIndex={0}
-               onClick={function(){ onEdit(f); }}
-               onKeyDown={function(ev){ if (ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); onEdit(f); } }}>
+               onClick={function(ev){ if (ev.target === ev.currentTarget || !ev.target.closest('button')) onEdit(f); }}
+               onKeyDown={function(ev){ if (ev.target === ev.currentTarget && (ev.key === 'Enter' || ev.key === ' ')){ ev.preventDefault(); onEdit(f); } }}>
             {soonPill(x.days)}
             <span className="soon-main">
               <span className="soon-acct">{f.account}{f.remarks ? <span className="muted small"> · {f.remarks}</span> : null}</span>
@@ -1211,6 +1219,8 @@ function logPill(action){
   if (action === 'update' || action === 'accountUpdate') return <span className="pill amber log-pill">edited</span>;
   if (action === 'delete' || action === 'accountDelete') return <span className="pill red log-pill">deleted</span>;
   if (action === 'transfer') return <span className="pill amber log-pill">moved</span>;
+  if (action === 'markDone') return <span className="pill gray log-pill">archived</span>;
+  if (action === 'autoArchive') return <span className="pill gray log-pill">auto-archived</span>;
   return <span className="pill gray log-pill">undid</span>;
 }
 
@@ -1253,8 +1263,8 @@ function RecentChanges({ log, onUndo, onView }){
         return viewable ? (
           <div key={e.id} className="log-row clickable" role="button" tabIndex={0}
                title="See the full details of this change"
-               onClick={function(){ onView(e); }}
-               onKeyDown={function(ev){ if (ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); onView(e); } }}>
+               onClick={function(ev){ if (ev.target === ev.currentTarget || !ev.target.closest('button')) onView(e); }}
+               onKeyDown={function(ev){ if (ev.target === ev.currentTarget && (ev.key === 'Enter' || ev.key === ' ')){ ev.preventDefault(); onView(e); } }}>
             {inner}
           </div>
         ) : (
@@ -2479,11 +2489,10 @@ function App(){
   }
 
   /* "Mark as done" — one tap, no confirmation (fully reversible via History):
-     a matured FD is archived to Inactive and drops off the dashboard. */
+     a matured FD is archived to Inactive and drops off the dashboard. Uses a
+     targeted markDone action (not a full update) so no other cell is touched. */
   function handleMarkDone(fd){
-    const payload = Object.assign({}, fd, { status: 'Inactive', showInDashboard: false });
-    delete payload.person; delete payload.bank;
-    mutate({ action: 'update', fd: payload }).then(function(ok){
+    mutate({ action: 'markDone', id: fd.id }).then(function(ok){
       if (ok) notifyOk('Marked FD' + (fd.accountNumber ? ' ' + fd.accountNumber : '') + ' as done — moved to Inactive');
     });
   }

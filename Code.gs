@@ -116,6 +116,8 @@ function doPost(e) {
       updateFd(req.fd || {});
     } else if (action === 'delete') {
       deleteFd(req.id);
+    } else if (action === 'markDone') {
+      markDone(req.id);
     } else if (action === 'accountCreate') {
       accountCreate(req.account || {});
     } else if (action === 'accountUpdate') {
@@ -377,15 +379,46 @@ function deleteFd(id) {
     'Deleted FD #' + before.id + ' · ' + before.account + moneyBit(before), before, null);
 }
 
-/** yyyy-MM-dd -> UTC millis at midnight, or null. */
+/** Strict yyyy-MM-dd -> UTC millis at midnight, or null. Matches the frontend's
+ *  parseISO: anchored and range-validated, so a malformed hand-typed date
+ *  (e.g. "2026-02-30") is left alone rather than normalised and swept. */
 function isoToUtc(s) {
-  var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s == null ? '' : s));
-  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : null;
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s == null ? '' : s).trim());
+  if (!m) return null;
+  var y = +m[1], mo = +m[2], d = +m[3];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  var t = Date.UTC(y, mo - 1, d), chk = new Date(t);
+  if (chk.getUTCMonth() !== mo - 1 || chk.getUTCDate() !== d) return null; // reject Feb-30 style overflow
+  return t;
+}
+
+/** Set only the named cells of one FD row — never rewrites the whole row, so
+ *  blank numeric/bool cells stay blank (a full fdToRow round-trip would turn
+ *  an empty maturity/rate cell into 0 / FALSE). */
+function setFdFields(id, changes) {
+  var sheet = getSheet(FD_SHEET);
+  var map = headerMap(sheet);
+  var rowIndex = findRowById(sheet, map, id);
+  if (!rowIndex) throw new Error('FD with id ' + id + ' not found');
+  for (var field in changes) {
+    if (!(field in map)) continue;
+    var v = changes[field];
+    if (BOOL_FIELDS[field]) v = toBool(v);
+    sheet.getRange(rowIndex, map[field] + 1).setValue(v);
+  }
+}
+
+function fdSnapshot(f) {
+  var out = {};
+  for (var k = 0; k < FD_FIELDS.length; k++) out[FD_FIELDS[k]] = f[FD_FIELDS[k]];
+  return out;
 }
 
 /** Archive Active FDs matured more than AUTO_INACTIVE_DAYS ago (IST). Runs on
  *  every request and in the daily job; idempotent (skips non-Active rows).
- *  Returns the number flipped. Each flip is logged and is undoable. */
+ *  Logged as 'autoArchive' which is deliberately NOT undoable — undoing would
+ *  just restore an FD still past the grace window, and the next sweep would
+ *  re-archive it. To keep a matured FD active, renew it (edit the end date). */
 function sweepMatured() {
   var today = isoToUtc(istDateString(0));
   if (today === null) return 0;
@@ -398,17 +431,26 @@ function sweepMatured() {
     if (end === null) continue;
     var daysPast = Math.round((today - end) / 86400000);
     if (daysPast > AUTO_INACTIVE_DAYS) {
-      var after = {};
-      for (var k = 0; k < FD_FIELDS.length; k++) after[FD_FIELDS[k]] = f[FD_FIELDS[k]];
-      after.status = 'Inactive';
-      after.showInDashboard = false;
-      rawUpdateFd(after);
-      appendLog('update', 'fd:' + f.id,
-        'Auto-archived FD #' + f.id + ' · ' + f.account + ' — matured ' + f.endDate, f, after);
+      setFdFields(f.id, { status: 'Inactive', showInDashboard: false });
+      var after = fdSnapshot(f); after.status = 'Inactive'; after.showInDashboard = false;
+      appendLog('autoArchive', 'fd:' + f.id,
+        'Auto-archived FD #' + f.id + ' · ' + f.account + ' — matured ' + f.endDate, fdSnapshot(f), after);
       flipped++;
     }
   }
   return flipped;
+}
+
+/** Manual "Mark as done": archive one matured FD immediately. Undoable — the
+ *  FD is still within the grace window, so restoring it stays Active. */
+function markDone(id) {
+  var before = findFdById(id);
+  if (!before) throw new Error('FD with id ' + id + ' not found');
+  var after = fdSnapshot(before); after.status = 'Inactive'; after.showInDashboard = false;
+  setFdFields(before.id, { status: 'Inactive', showInDashboard: false });
+  appendLog('markDone', 'fd:' + before.id,
+    'Marked FD #' + before.id + ' done · ' + before.account + ' — matured ' + before.endDate,
+    fdSnapshot(before), after);
 }
 
 function findRowById(sheet, map, id) {
@@ -691,7 +733,9 @@ function readLog(limit) {
   for (var i = 0; i < entries.length; i++) {
     var e = entries[i];
     // transfers move many rows and are reversible by another transfer, not undo
-    var blocked = e.undone || e.action === 'undo' || e.action === 'transfer';
+    // 'autoArchive' is non-undoable: undo would restore an FD still past the
+    // grace window, and the next sweep would immediately re-archive it.
+    var blocked = e.undone || e.action === 'undo' || e.action === 'transfer' || e.action === 'autoArchive';
     for (var j = 0; j < i && !blocked; j++) { // entries[j] are newer
       if (entries[j].target === e.target) blocked = true;
     }
@@ -734,6 +778,10 @@ function undoLog(logId) {
     rawDeleteFd(after.id);
   } else if (action === 'update') {
     rawUpdateFd(before);
+  } else if (action === 'markDone') {
+    // targeted restore — don't rewrite the whole row (preserves blank cells)
+    if (!findFdById(before.id)) throw new Error('cannot undo: FD id ' + before.id + ' not found');
+    setFdFields(before.id, { status: before.status, showInDashboard: before.showInDashboard });
   } else if (action === 'delete') {
     if (findFdById(before.id)) throw new Error('cannot undo: FD id ' + before.id + ' exists again');
     insertFdRow(before);

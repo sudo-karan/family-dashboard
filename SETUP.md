@@ -147,8 +147,10 @@ it in *Maturing soon* as a reminder. If nobody acts, it **auto-becomes Inactive
 server-side whenever the app is opened, so no setup is needed — but it does need
 the current `Code.gs` deployed. A **"Mark as done"** button (on the *Maturing
 soon* row and in *All FDs*) archives a matured FD immediately once you've
-renewed or withdrawn it; both the auto and manual archives show up in the
-change log and can be undone.
+renewed or withdrawn it. Both show up in the change log; the manual "Mark as
+done" can be undone from History, while the automatic 15-day archive can't
+(undoing it would just re-archive — to keep a matured FD active, renew it by
+editing its end date).
 
 ## Maturity reminders (push notifications) — optional
 
