@@ -25,6 +25,10 @@ var LOG_SHEET = 'Log';
 var LOG_HEADERS = ['Id', 'Time', 'Device', 'Action', 'Target', 'Summary', 'Before', 'After', 'Undone'];
 // Optional device name sent with each mutation ("Dad's phone"); set per request.
 var CURRENT_DEVICE = '';
+// An Active FD whose end date is more than this many days in the past is
+// auto-archived to Inactive (see sweepMatured). Before then it stays Active
+// so it still shows as "matured Nd ago" and nudges a renew/withdraw.
+var AUTO_INACTIVE_DAYS = 15;
 
 // Canonical field order used when talking JSON to the frontend.
 var FD_FIELDS = ['id', 'account', 'accountNumber', 'startDate', 'endDate',
@@ -94,6 +98,13 @@ function doPost(e) {
 
     CURRENT_DEVICE = String(req.device || '').trim().substring(0, 40);
 
+    // Self-heal on every request: archive FDs matured past the grace window.
+    // Logged as "auto", so the requester's device isn't credited for it.
+    var reqDevice = CURRENT_DEVICE;
+    CURRENT_DEVICE = 'auto';
+    try { sweepMatured(); } catch (e) { /* never let the sweep break a request */ }
+    CURRENT_DEVICE = reqDevice;
+
     var action = String(req.action || '');
     if (action === 'list') {
       // fall through: every action returns the full fresh state
@@ -105,6 +116,8 @@ function doPost(e) {
       updateFd(req.fd || {});
     } else if (action === 'delete') {
       deleteFd(req.id);
+    } else if (action === 'markDone') {
+      markDone(req.id);
     } else if (action === 'accountCreate') {
       accountCreate(req.account || {});
     } else if (action === 'accountUpdate') {
@@ -364,6 +377,80 @@ function deleteFd(id) {
   rawDeleteFd(id);
   appendLog('delete', 'fd:' + before.id,
     'Deleted FD #' + before.id + ' · ' + before.account + moneyBit(before), before, null);
+}
+
+/** Strict yyyy-MM-dd -> UTC millis at midnight, or null. Matches the frontend's
+ *  parseISO: anchored and range-validated, so a malformed hand-typed date
+ *  (e.g. "2026-02-30") is left alone rather than normalised and swept. */
+function isoToUtc(s) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s == null ? '' : s).trim());
+  if (!m) return null;
+  var y = +m[1], mo = +m[2], d = +m[3];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  var t = Date.UTC(y, mo - 1, d), chk = new Date(t);
+  if (chk.getUTCMonth() !== mo - 1 || chk.getUTCDate() !== d) return null; // reject Feb-30 style overflow
+  return t;
+}
+
+/** Set only the named cells of one FD row — never rewrites the whole row, so
+ *  blank numeric/bool cells stay blank (a full fdToRow round-trip would turn
+ *  an empty maturity/rate cell into 0 / FALSE). */
+function setFdFields(id, changes) {
+  var sheet = getSheet(FD_SHEET);
+  var map = headerMap(sheet);
+  var rowIndex = findRowById(sheet, map, id);
+  if (!rowIndex) throw new Error('FD with id ' + id + ' not found');
+  for (var field in changes) {
+    if (!(field in map)) continue;
+    var v = changes[field];
+    if (BOOL_FIELDS[field]) v = toBool(v);
+    sheet.getRange(rowIndex, map[field] + 1).setValue(v);
+  }
+}
+
+function fdSnapshot(f) {
+  var out = {};
+  for (var k = 0; k < FD_FIELDS.length; k++) out[FD_FIELDS[k]] = f[FD_FIELDS[k]];
+  return out;
+}
+
+/** Archive Active FDs matured more than AUTO_INACTIVE_DAYS ago (IST). Runs on
+ *  every request and in the daily job; idempotent (skips non-Active rows).
+ *  Logged as 'autoArchive' which is deliberately NOT undoable — undoing would
+ *  just restore an FD still past the grace window, and the next sweep would
+ *  re-archive it. To keep a matured FD active, renew it (edit the end date). */
+function sweepMatured() {
+  var today = isoToUtc(istDateString(0));
+  if (today === null) return 0;
+  var fds = readFds();
+  var flipped = 0;
+  for (var i = 0; i < fds.length; i++) {
+    var f = fds[i];
+    if (f.status !== 'Active') continue;
+    var end = isoToUtc(f.endDate);
+    if (end === null) continue;
+    var daysPast = Math.round((today - end) / 86400000);
+    if (daysPast > AUTO_INACTIVE_DAYS) {
+      setFdFields(f.id, { status: 'Inactive', showInDashboard: false });
+      var after = fdSnapshot(f); after.status = 'Inactive'; after.showInDashboard = false;
+      appendLog('autoArchive', 'fd:' + f.id,
+        'Auto-archived FD #' + f.id + ' · ' + f.account + ' — matured ' + f.endDate, fdSnapshot(f), after);
+      flipped++;
+    }
+  }
+  return flipped;
+}
+
+/** Manual "Mark as done": archive one matured FD immediately. Undoable — the
+ *  FD is still within the grace window, so restoring it stays Active. */
+function markDone(id) {
+  var before = findFdById(id);
+  if (!before) throw new Error('FD with id ' + id + ' not found');
+  var after = fdSnapshot(before); after.status = 'Inactive'; after.showInDashboard = false;
+  setFdFields(before.id, { status: 'Inactive', showInDashboard: false });
+  appendLog('markDone', 'fd:' + before.id,
+    'Marked FD #' + before.id + ' done · ' + before.account + ' — matured ' + before.endDate,
+    fdSnapshot(before), after);
 }
 
 function findRowById(sheet, map, id) {
@@ -646,7 +733,9 @@ function readLog(limit) {
   for (var i = 0; i < entries.length; i++) {
     var e = entries[i];
     // transfers move many rows and are reversible by another transfer, not undo
-    var blocked = e.undone || e.action === 'undo' || e.action === 'transfer';
+    // 'autoArchive' is non-undoable: undo would restore an FD still past the
+    // grace window, and the next sweep would immediately re-archive it.
+    var blocked = e.undone || e.action === 'undo' || e.action === 'transfer' || e.action === 'autoArchive';
     for (var j = 0; j < i && !blocked; j++) { // entries[j] are newer
       if (entries[j].target === e.target) blocked = true;
     }
@@ -689,6 +778,10 @@ function undoLog(logId) {
     rawDeleteFd(after.id);
   } else if (action === 'update') {
     rawUpdateFd(before);
+  } else if (action === 'markDone') {
+    // targeted restore — don't rewrite the whole row (preserves blank cells)
+    if (!findFdById(before.id)) throw new Error('cannot undo: FD id ' + before.id + ' not found');
+    setFdFields(before.id, { status: before.status, showInDashboard: before.showInDashboard });
   } else if (action === 'delete') {
     if (findFdById(before.id)) throw new Error('cannot undo: FD id ' + before.id + ' exists again');
     insertFdRow(before);
@@ -1055,6 +1148,9 @@ function istDateString(offsetDays) {
 }
 /** Trigger target: push if any Active FD matures in {0,1,2} days IST. */
 function sendMaturityPush() {
+  // Also archive long-matured FDs daily, even if nobody opens the app.
+  CURRENT_DEVICE = 'auto';
+  try { sweepMatured(); } catch (e) { /* keep going to the push */ }
   if (!PropertiesService.getScriptProperties().getProperty('VAPID_PUBLIC')) return;
   var targets = {};
   targets[istDateString(0)] = 1; targets[istDateString(1)] = 1; targets[istDateString(2)] = 1;
