@@ -224,7 +224,8 @@
   .col-acct{ left:128px; }
   .fd-table td.col-actions, .fd-table td.col-acct{ background:var(--surface); }
   .fd-table tbody tr:hover td.col-actions, .fd-table tbody tr:hover td.col-acct{ background:var(--surface-2); }
-  .fd-table th.col-actions, .fd-table th.col-acct{ z-index:3; }
+  .fd-table th.col-actions, .fd-table th.col-acct,
+  .fd-table tfoot td.col-actions, .fd-table tfoot td.col-acct{ z-index:3; }
   .mini-table td.col-actions, .mini-table td.col-acct{ background:var(--surface); }
   .mini-table th.col-actions, .mini-table th.col-acct{ position:sticky; z-index:3; background:var(--surface-2); }
   .col-acct{ box-shadow:6px 0 7px -5px rgba(20,48,43,.22); }
@@ -1445,7 +1446,7 @@ const SORTS = {
 function AllFDs({ fds, accounts, onEdit, onDelete, onMarkDone }){
   const [person, setPerson] = useState('all');
   const [account, setAccount] = useState('all');
-  const [status, setStatus] = useState('all');
+  const [status, setStatus] = useState('Active'); /* default: show live FDs */
   const [dash, setDash] = useState('all');
   const [q, setQ] = useState('');
   const [sort, setSort] = useState('end-asc');
@@ -1596,8 +1597,13 @@ function AllFDs({ fds, accounts, onEdit, onDelete, onMarkDone }){
             })}
           </tbody>
           <tfoot>
+            {/* first two cells mirror the pinned body columns, so the count
+                stays under Account and each total stays under its real column
+                (never sliding left to read like an account total) */}
             <tr>
-              <td colSpan={7}>{filtered.length} of {fds.length} deposits</td>
+              <td className="col-actions"></td>
+              <td className="col-acct">{filtered.length} of {fds.length} deposits</td>
+              <td colSpan={5}></td>
               <td className="num">{M.fmtINR(totP)}{M.fmtINRWords(totP) ? <div className="cell-sub cell-words">{M.fmtINRWords(totP)}</div> : null}</td>
               <td className="num">{M.fmtINR(totM)}{M.fmtINRWords(totM) ? <div className="cell-sub cell-words">{M.fmtINRWords(totM)}</div> : null}</td>
               <td className="num">{M.fmtINR(totM - totP)}{M.fmtINRWords(totM - totP) ? <div className="cell-sub cell-words">{M.fmtINRWords(totM - totP)}</div> : null}</td>
@@ -2247,6 +2253,7 @@ function App(){
   const [auth, setAuth] = useState(null);
   const [data, setData] = useState(null);
   const [tab, setTab] = useState(function(){ const t = FDPrefs.getTab(); return TABS[t] ? t : 'dashboard'; });
+  const [allKey, setAllKey] = useState(0); /* bump to remount All FDs → reset its filters */
   const [editing, setEditing] = useState(null);      /* null | 'new' | fd */
   const [accEditing, setAccEditing] = useState(null); /* null | 'new' | account */
   const [transferring, setTransferring] = useState(null); /* {account, forceOut} */
@@ -2518,8 +2525,17 @@ function App(){
      a matured FD is archived to Inactive and drops off the dashboard. Uses a
      targeted markDone action (not a full update) so no other cell is touched. */
   function handleMarkDone(fd){
-    mutate({ action: 'markDone', id: fd.id }).then(function(ok){
-      if (ok) notifyOk('Marked FD' + (fd.accountNumber ? ' ' + fd.accountNumber : '') + ' as done — moved to Inactive');
+    setConfirm({
+      title: 'Mark this FD as done?',
+      lines: fdSummary(fd).concat(['Moves it to Inactive, off the dashboard. You can undo it any time from History.']),
+      confirmLabel: 'Yes, mark as done',
+      danger: false,
+      run: function(){
+        return mutate({ action: 'markDone', id: fd.id }).then(function(ok){
+          if (ok) notifyOk('Marked FD' + (fd.accountNumber ? ' ' + fd.accountNumber : '') + ' as done — moved to Inactive');
+          return ok;
+        });
+      }
     });
   }
 
@@ -2599,7 +2615,7 @@ function App(){
           <button type="button" className={'tab-btn' + (tab === 'dashboard' ? ' on' : '')}
                   onClick={function(){ switchTab('dashboard'); }}>Dashboard</button>
           <button type="button" className={'tab-btn' + (tab === 'all' ? ' on' : '')}
-                  onClick={function(){ switchTab('all'); }}>All FDs</button>
+                  onClick={function(){ switchTab('all'); setAllKey(function(k){ return k + 1; }); }}>All FDs</button>
           <button type="button" className={'tab-btn' + (tab === 'accounts' ? ' on' : '')}
                   onClick={function(){ switchTab('accounts'); }}>Accounts</button>
           <button type="button" className={'tab-btn' + (tab === 'history' ? ' on' : '')}
@@ -2636,7 +2652,7 @@ function App(){
 
       <main>
         {tab === 'dashboard' && <Dashboard fds={joined} onEdit={function(f){ setEditing(f); }} onMarkDone={handleMarkDone} />}
-        {tab === 'all' && <AllFDs fds={joined} accounts={data.accounts} onEdit={function(f){ setEditing(f); }} onDelete={handleDelete} onMarkDone={handleMarkDone} />}
+        {tab === 'all' && <AllFDs key={allKey} fds={joined} accounts={data.accounts} onEdit={function(f){ setEditing(f); }} onDelete={handleDelete} onMarkDone={handleMarkDone} />}
         {tab === 'accounts' && <AccountsView accounts={data.accounts} fds={joined}
                 onAdd={function(){ setAccEditing('new'); }}
                 onEdit={function(a){ setAccEditing(a); }}
