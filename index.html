@@ -1911,7 +1911,7 @@ function FdForm({ initial, accounts, busy, onCancel, onSave, readOnly, title, he
                   </select>
                 </Field>
                 <Field id="f-acctno" label="FD account number">
-                  <input id="f-acctno" type="text" value={f.accountNumber} placeholder="as printed on the receipt"
+                  <input id="f-acctno" type="text" inputMode="numeric" pattern="[0-9]*" value={f.accountNumber} placeholder="as printed on the receipt"
                          onChange={function(e){ setField('accountNumber', e.target.value); }} />
                 </Field>
               </div>
@@ -1941,7 +1941,7 @@ function FdForm({ initial, accounts, busy, onCancel, onSave, readOnly, title, he
                     </button>
                   </div>
                   <Field id="f-acctno2" label="FD account number">
-                    <input id="f-acctno2" type="text" value={f.accountNumber}
+                    <input id="f-acctno2" type="text" inputMode="numeric" pattern="[0-9]*" value={f.accountNumber}
                            onChange={function(e){ setField('accountNumber', e.target.value); }} />
                   </Field>
                 </div>
