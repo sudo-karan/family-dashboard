@@ -1618,11 +1618,14 @@ function AllFDs({ fds, accounts, onEdit, onDelete, onMarkDone }){
 
 /* ============================== accounts tab ============================== */
 function AccountsView({ accounts, fds, onAdd, onEdit, onDelete, onTransfer }){
+  /* count + principal shown are ACTIVE FDs only. `total` (all FDs) is kept
+     only for the delete guard — an account can't be deleted while any FD
+     (even inactive) still points to it — and is never shown. */
   const stats = {};
   fds.forEach(function(f){
-    const s = stats[f.account] = stats[f.account] || { count:0, principal:0 };
-    s.count += 1;
-    s.principal += Number(f.principal) || 0;
+    const s = stats[f.account] = stats[f.account] || { count:0, principal:0, total:0 };
+    s.total += 1;
+    if (f.status === 'Active'){ s.count += 1; s.principal += Number(f.principal) || 0; }
   });
   const rows = accounts.slice().sort(function(a, b){
     return (a.person || '').localeCompare(b.person || '') || a.name.localeCompare(b.name);
@@ -1646,7 +1649,7 @@ function AccountsView({ accounts, fds, onAdd, onEdit, onDelete, onTransfer }){
           </thead>
           <tbody>
             {rows.map(function(a){
-              const s = stats[a.name] || { count:0, principal:0 };
+              const s = stats[a.name] || { count:0, principal:0, total:0 };
               return (
                 <tr key={a.name}>
                   <td className="col-actions row-actions stacked">
@@ -1654,7 +1657,7 @@ function AccountsView({ accounts, fds, onAdd, onEdit, onDelete, onTransfer }){
                     <button type="button" className="btn ghost small" onClick={function(){ onTransfer(a); }}
                             title="Move FDs to or from this account">Transfer</button>
                     <button type="button" className="btn danger-ghost small" aria-label={'Delete account ' + a.name}
-                            title={s.count > 0 ? 'You will be asked to move its ' + s.count + ' FD(s) first' : 'Delete this account'}
+                            title={s.total > 0 ? 'You will be asked to move its ' + s.total + ' FD(s) first' : 'Delete this account'}
                             onClick={function(){ onDelete(a); }}>Delete</button>
                   </td>
                   <td className="col-acct"><span className="share-name">{a.name}</span></td>
