@@ -1620,15 +1620,27 @@ function AllFDs({ fds, accounts, onEdit, onDelete, onMarkDone }){
 
 /* ============================== accounts tab ============================== */
 function AccountsView({ accounts, fds, onAdd, onEdit, onDelete, onTransfer }){
-  /* count + principal shown are ACTIVE FDs only. `total` (all FDs) is kept
-     only for the delete guard — an account can't be deleted while any FD
-     (even inactive) still points to it — and is never shown. */
-  const stats = {};
+  /* Per account: `total` counts ALL FDs (even inactive) for the delete guard,
+     and is never shown. Among ACTIVE FDs only, group by remark — an account
+     name together with a remark is treated as the grouping key, so FDs sharing
+     a remark total together and separately from the untagged ones. */
+  const info = {};
   fds.forEach(function(f){
-    const s = stats[f.account] = stats[f.account] || { count:0, principal:0, total:0 };
-    s.total += 1;
-    if (f.status === 'Active'){ s.count += 1; s.principal += Number(f.principal) || 0; }
+    const a = info[f.account] = info[f.account] || { total:0, groups:{} };
+    a.total += 1;
+    if (f.status === 'Active'){
+      const rk = (f.remarks || '').trim();
+      const g = a.groups[rk] = a.groups[rk] || { remark: rk, count:0, principal:0 };
+      g.count += 1; g.principal += Number(f.principal) || 0;
+    }
   });
+  /* remark groups for an account, named ones A→Z with the untagged group last */
+  function groupsOf(name){
+    const g = (info[name] || {}).groups || {};
+    return Object.keys(g).sort(function(x, y){
+      return ((!x) - (!y)) || x.localeCompare(y);
+    }).map(function(k){ return g[k]; });
+  }
   const rows = accounts.slice().sort(function(a, b){
     return (a.person || '').localeCompare(b.person || '') || a.name.localeCompare(b.name);
   });
@@ -1647,28 +1659,36 @@ function AccountsView({ accounts, fds, onAdd, onEdit, onDelete, onTransfer }){
        <div className="mini-scroll">
         <table className="mini-table wide">
           <thead>
-            <tr><th className="col-actions" aria-label="Actions"></th><th className="col-acct">Account</th><th>Person</th><th>Bank</th><th className="num">FDs</th><th className="num">Principal</th></tr>
+            <tr><th className="col-actions" aria-label="Actions"></th><th className="col-acct">Account</th><th>Person</th><th>Bank</th><th>Remarks</th><th className="num">FDs</th><th className="num">Principal</th></tr>
           </thead>
           <tbody>
             {rows.map(function(a){
-              const s = stats[a.name] || { count:0, principal:0, total:0 };
-              return (
-                <tr key={a.name}>
-                  <td className="col-actions row-actions stacked">
-                    <button type="button" className="btn ghost small" onClick={function(){ onEdit(a); }}>Edit</button>
-                    <button type="button" className="btn ghost small" onClick={function(){ onTransfer(a); }}
-                            title="Move FDs to or from this account">Transfer</button>
-                    <button type="button" className="btn danger-ghost small" aria-label={'Delete account ' + a.name}
-                            title={s.total > 0 ? 'You will be asked to move its ' + s.total + ' FD(s) first' : 'Delete this account'}
-                            onClick={function(){ onDelete(a); }}>Delete</button>
-                  </td>
-                  <td className="col-acct"><span className="share-name">{a.name}</span></td>
-                  <td>{a.person || '—'}</td>
-                  <td>{a.bank || '—'}</td>
-                  <td className="num">{s.count}</td>
-                  <td className="num">{s.count ? M.fmtINR(s.principal) : '—'}{s.count && M.fmtINRWords(s.principal) ? <div className="cell-sub cell-words">{M.fmtINRWords(s.principal)}</div> : null}</td>
-                </tr>
-              );
+              const total = (info[a.name] || {}).total || 0;
+              const groups = groupsOf(a.name);
+              const cells = groups.length ? groups : [{ remark:'', count:0, principal:0 }];
+              const span = cells.length;
+              return cells.map(function(g, gi){
+                return (
+                  <tr key={a.name + '|' + gi}>
+                    {gi === 0 ? (
+                      <td className="col-actions row-actions stacked" rowSpan={span}>
+                        <button type="button" className="btn ghost small" onClick={function(){ onEdit(a); }}>Edit</button>
+                        <button type="button" className="btn ghost small" onClick={function(){ onTransfer(a); }}
+                                title="Move FDs to or from this account">Transfer</button>
+                        <button type="button" className="btn danger-ghost small" aria-label={'Delete account ' + a.name}
+                                title={total > 0 ? 'You will be asked to move its ' + total + ' FD(s) first' : 'Delete this account'}
+                                onClick={function(){ onDelete(a); }}>Delete</button>
+                      </td>
+                    ) : null}
+                    {gi === 0 ? <td className="col-acct" rowSpan={span}><span className="share-name">{a.name}</span></td> : null}
+                    {gi === 0 ? <td rowSpan={span}>{a.person || '—'}</td> : null}
+                    {gi === 0 ? <td rowSpan={span}>{a.bank || '—'}</td> : null}
+                    <td>{g.remark ? g.remark : <span className="muted">—</span>}</td>
+                    <td className="num">{g.count}</td>
+                    <td className="num">{g.count ? M.fmtINR(g.principal) : '—'}{g.count && M.fmtINRWords(g.principal) ? <div className="cell-sub cell-words">{M.fmtINRWords(g.principal)}</div> : null}</td>
+                  </tr>
+                );
+              });
             })}
           </tbody>
         </table>
@@ -1913,8 +1933,8 @@ function FdForm({ initial, accounts, busy, onCancel, onSave, readOnly, title, he
                   </select>
                 </Field>
                 <Field id="f-acctno" label="FD account number">
-                  <input id="f-acctno" type="text" inputMode="numeric" pattern="[0-9]*" value={f.accountNumber} placeholder="as printed on the receipt"
-                         onChange={function(e){ setField('accountNumber', e.target.value); }} />
+                  <input id="f-acctno" type="text" inputMode="numeric" pattern="[0-9]*" value={f.accountNumber} placeholder="digits only — enter 0 if N/A"
+                         onChange={function(e){ setField('accountNumber', e.target.value.replace(/[^0-9]/g, '')); }} />
                 </Field>
               </div>
             ) : (
@@ -1943,8 +1963,8 @@ function FdForm({ initial, accounts, busy, onCancel, onSave, readOnly, title, he
                     </button>
                   </div>
                   <Field id="f-acctno2" label="FD account number">
-                    <input id="f-acctno2" type="text" inputMode="numeric" pattern="[0-9]*" value={f.accountNumber}
-                           onChange={function(e){ setField('accountNumber', e.target.value); }} />
+                    <input id="f-acctno2" type="text" inputMode="numeric" pattern="[0-9]*" value={f.accountNumber} placeholder="digits only — enter 0 if N/A"
+                           onChange={function(e){ setField('accountNumber', e.target.value.replace(/[^0-9]/g, '')); }} />
                   </Field>
                 </div>
               </div>
