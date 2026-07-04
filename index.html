@@ -566,7 +566,9 @@ const FDMath = (function(){
         if (!pins.maturity) v.maturity = '';
       } else if (can && rp && pp && !pins.maturity){
         const m = maturityOf(num(v.principal), num(v.rate), tDays, v.compounding);
-        v.maturity = m === null ? '' : String(round2(m));
+        /* auto-filled maturity is rounded to whole rupees — banks quote whole
+         * amounts; a manually typed maturity is pinned and kept verbatim */
+        v.maturity = m === null ? '' : String(Math.round(m));
       } else if (can && pp && mp && !pins.rate){
         const r = rateOf(num(v.principal), num(v.maturity), tDays, v.compounding);
         v.rate = r === null ? '' : String(round2(r));
