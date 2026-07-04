@@ -213,6 +213,31 @@
   .date-red{ color:var(--red); font-weight:650; }
   .date-amber{ color:var(--amber); font-weight:650; }
   .row-actions{ white-space:nowrap; }
+  /* actions stacked in one narrow column (age-friendly: bigger targets, one per line) */
+  .row-actions.stacked{ display:flex; flex-direction:column; gap:6px; align-items:stretch; white-space:normal; }
+  .row-actions.stacked .btn{ font-size:12.5px; padding:6px 8px; text-align:center; }
+  /* pinned-left columns: actions + account name stay put while the wide table
+     scrolls sideways, so nobody has to scroll to the end or loses their row */
+  .fd-table .col-actions, .fd-table .col-acct,
+  .mini-table .col-actions, .mini-table .col-acct{ position:sticky; z-index:1; }
+  .col-actions{ left:0; width:128px; min-width:128px; }
+  .col-acct{ left:128px; }
+  .fd-table td.col-actions, .fd-table td.col-acct{ background:var(--surface); }
+  .fd-table tbody tr:hover td.col-actions, .fd-table tbody tr:hover td.col-acct{ background:var(--surface-2); }
+  .fd-table th.col-actions, .fd-table th.col-acct{ z-index:3; }
+  .mini-table td.col-actions, .mini-table td.col-acct{ background:var(--surface); }
+  .mini-table th.col-actions, .mini-table th.col-acct{ position:sticky; z-index:3; background:var(--surface-2); }
+  .col-acct{ box-shadow:6px 0 7px -5px rgba(20,48,43,.22); }
+  html[data-theme="dark"] .col-acct{ box-shadow:6px 0 7px -5px rgba(0,0,0,.55); }
+  /* On a phone, two frozen columns (~256px) would swallow the viewport and
+     leave only a sliver to read the rest — so unpin below 640px. The actions
+     still sit first, so the buttons are reachable without scrolling to the
+     end; pinning stays on tablets/laptops where there's room. */
+  @media (max-width: 640px){
+    .fd-table .col-actions, .fd-table .col-acct,
+    .mini-table .col-actions, .mini-table .col-acct{ position:static; left:auto; }
+    .col-acct{ box-shadow:none; }
+  }
 
   /* ---------- modal / form ---------- */
   .overlay{ position:fixed; inset:0; background:rgba(20,48,43,.45); display:flex; align-items:flex-start;
@@ -1527,10 +1552,11 @@ function AllFDs({ fds, accounts, onEdit, onDelete, onMarkDone }){
         <table className="fd-table">
           <thead>
             <tr>
-              <th>Account</th><th>FD No.</th><th>Start</th><th>End</th><th>Tenure</th>
+              <th className="col-actions" aria-label="Actions"></th><th className="col-acct">Account</th>
+              <th>FD No.</th><th>Start</th><th>End</th><th>Tenure</th>
               <th className="num">Rate</th><th className="num">Principal</th><th className="num">Maturity</th>
               <th className="num">Interest</th><th>Payout</th><th>Status</th><th>Dashboard</th>
-              <th>Remarks</th><th aria-label="Actions"></th>
+              <th>Remarks</th>
             </tr>
           </thead>
           <tbody>
@@ -1543,7 +1569,16 @@ function AllFDs({ fds, accounts, onEdit, onDelete, onMarkDone }){
               const sl = statusLabel(f);
               return (
                 <tr key={f.id}>
-                  <td><div className="cell-main">{f.account}</div><div className="cell-sub">{f.person}</div></td>
+                  <td className="col-actions row-actions stacked">
+                    <button type="button" className="btn ghost small" onClick={function(){ onEdit(f); }}>Edit</button>
+                    {isMatured(f) ? (
+                      <button type="button" className="btn ghost small" title="Move this matured FD to Inactive"
+                              onClick={function(){ onMarkDone(f); }}>Mark as done</button>
+                    ) : null}
+                    <button type="button" className="btn danger-ghost small" aria-label={'Delete FD ' + f.id}
+                            onClick={function(){ onDelete(f); }}>Delete</button>
+                  </td>
+                  <td className="col-acct"><div className="cell-main">{f.account}</div><div className="cell-sub">{f.person}</div></td>
                   <td><span className="fdno">{f.accountNumber || '—'}</span></td>
                   <td className="date-cell">{M.fmtDate(f.startDate)}</td>
                   <td className={'date-cell' + endCls(f)}>{M.fmtDate(f.endDate)}</td>
@@ -1556,26 +1591,17 @@ function AllFDs({ fds, accounts, onEdit, onDelete, onMarkDone }){
                   <td><span className={'pill ' + sl.cls}>{sl.text}</span></td>
                   <td><span className={'pill ' + (isOnDashboard(f) ? 'green' : 'gray')}>{isOnDashboard(f) ? 'Shown' : 'Hidden'}</span></td>
                   <td className="remarks-cell" title={f.remarks || ''}>{f.remarks || ''}</td>
-                  <td className="row-actions">
-                    <button type="button" className="btn ghost small" onClick={function(){ onEdit(f); }}>Edit</button>
-                    {isMatured(f) ? (
-                      <button type="button" className="btn ghost small" title="Move this matured FD to Inactive"
-                              onClick={function(){ onMarkDone(f); }}>Mark as done</button>
-                    ) : null}
-                    <button type="button" className="btn danger-ghost small" aria-label={'Delete FD ' + f.id}
-                            onClick={function(){ onDelete(f); }}>Delete</button>
-                  </td>
                 </tr>
               );
             })}
           </tbody>
           <tfoot>
             <tr>
-              <td colSpan={6}>{filtered.length} of {fds.length} deposits</td>
+              <td colSpan={7}>{filtered.length} of {fds.length} deposits</td>
               <td className="num">{M.fmtINR(totP)}{M.fmtINRWords(totP) ? <div className="cell-sub cell-words">{M.fmtINRWords(totP)}</div> : null}</td>
               <td className="num">{M.fmtINR(totM)}{M.fmtINRWords(totM) ? <div className="cell-sub cell-words">{M.fmtINRWords(totM)}</div> : null}</td>
               <td className="num">{M.fmtINR(totM - totP)}{M.fmtINRWords(totM - totP) ? <div className="cell-sub cell-words">{M.fmtINRWords(totM - totP)}</div> : null}</td>
-              <td colSpan={5}></td>
+              <td colSpan={4}></td>
             </tr>
           </tfoot>
         </table>
@@ -1610,19 +1636,14 @@ function AccountsView({ accounts, fds, onAdd, onEdit, onDelete, onTransfer }){
        <div className="mini-scroll">
         <table className="mini-table wide">
           <thead>
-            <tr><th>Account</th><th>Person</th><th>Bank</th><th className="num">FDs</th><th className="num">Principal</th><th aria-label="Actions"></th></tr>
+            <tr><th className="col-actions" aria-label="Actions"></th><th className="col-acct">Account</th><th>Person</th><th>Bank</th><th className="num">FDs</th><th className="num">Principal</th></tr>
           </thead>
           <tbody>
             {rows.map(function(a){
               const s = stats[a.name] || { count:0, principal:0 };
               return (
                 <tr key={a.name}>
-                  <td><span className="share-name">{a.name}</span></td>
-                  <td>{a.person || '—'}</td>
-                  <td>{a.bank || '—'}</td>
-                  <td className="num">{s.count}</td>
-                  <td className="num">{s.count ? M.fmtINR(s.principal) : '—'}{s.count && M.fmtINRWords(s.principal) ? <div className="cell-sub cell-words">{M.fmtINRWords(s.principal)}</div> : null}</td>
-                  <td className="row-actions" style={{ textAlign:'right' }}>
+                  <td className="col-actions row-actions stacked">
                     <button type="button" className="btn ghost small" onClick={function(){ onEdit(a); }}>Edit</button>
                     <button type="button" className="btn ghost small" onClick={function(){ onTransfer(a); }}
                             title="Move FDs to or from this account">Transfer</button>
@@ -1630,6 +1651,11 @@ function AccountsView({ accounts, fds, onAdd, onEdit, onDelete, onTransfer }){
                             title={s.count > 0 ? 'You will be asked to move its ' + s.count + ' FD(s) first' : 'Delete this account'}
                             onClick={function(){ onDelete(a); }}>Delete</button>
                   </td>
+                  <td className="col-acct"><span className="share-name">{a.name}</span></td>
+                  <td>{a.person || '—'}</td>
+                  <td>{a.bank || '—'}</td>
+                  <td className="num">{s.count}</td>
+                  <td className="num">{s.count ? M.fmtINR(s.principal) : '—'}{s.count && M.fmtINRWords(s.principal) ? <div className="cell-sub cell-words">{M.fmtINRWords(s.principal)}</div> : null}</td>
                 </tr>
               );
             })}
