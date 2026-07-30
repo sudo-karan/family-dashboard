@@ -1496,7 +1496,8 @@ function AllFDs({ fds, accounts, onEdit, onDelete, onMarkDone }){
     let rows = fds.filter(function(f){
       if (person !== 'all' && f.person !== person) return false;
       if (account !== 'all' && f.account !== account) return false;
-      if (status !== 'all' && f.status !== status) return false;
+      if (status === 'Matured'){ if (!isMatured(f)) return false; }
+      else if (status !== 'all' && f.status !== status) return false;
       if (dash === 'shown' && !isOnDashboard(f)) return false;
       if (dash === 'hidden' && isOnDashboard(f)) return false;
       if (!searchMatch(hays[f.id], q)) return false;
@@ -1548,6 +1549,7 @@ function AllFDs({ fds, accounts, onEdit, onDelete, onMarkDone }){
         <select aria-label="Filter by status" value={status} onChange={function(e){ setStatus(e.target.value); }}>
           <option value="all">Any status</option>
           <option value="Active">Active</option>
+          <option value="Matured">Matured</option>
           <option value="Inactive">Inactive</option>
         </select>
         <select aria-label="Filter by dashboard visibility" value={dash} onChange={function(e){ setDash(e.target.value); }}>
