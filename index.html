@@ -601,23 +601,13 @@ const FDMath = (function(){
 })();
 
 /* ===================================================================== *
- *  Auto-inactivate: an Active FD whose end date is more than
- *  AUTO_INACTIVE_DAYS in the past is archived (Inactive, off the
- *  dashboard). Before that grace window it stays Active so it still shows
- *  as "Matured Nd ago" and nudges a renew/withdraw. The backend runs the
- *  same rule in Code.gs; this copy powers demo mode and the tests.
+ *  Matured FDs are NOT auto-archived. An Active FD whose end date has
+ *  passed stays Active — the UI shows "Matured Nd ago" (see statusLabel)
+ *  and nudges a renew/withdraw — until someone taps "Mark as done". This
+ *  no-op mirrors the backend, which no longer sweeps; it is kept so demo
+ *  mode and the tests share one shape with production.
  * ===================================================================== */
-const AUTO_INACTIVE_DAYS = 15;
-function sweepMatured(fds, todayIso, graceDays){
-  return (fds || []).map(function(f){
-    if (f.status !== 'Active' || !FDMath.parseISO(f.endDate)) return f;
-    const daysPast = FDMath.diffDays(f.endDate, todayIso); /* today − endDate */
-    if (daysPast !== null && daysPast > graceDays){
-      return Object.assign({}, f, { status: 'Inactive', showInDashboard: false });
-    }
-    return f;
-  });
-}
+function sweepMatured(fds){ return fds || []; }
 
 /* ===================================================================== *
  *  Change-log helpers shared by demo mode and the UI. The backend keeps
@@ -635,8 +625,9 @@ function nowStamp(){
 function annotateLog(rawLog){
   const newestFirst = (rawLog || []).slice().reverse();
   return newestFirst.slice(0, 15).map(function(e, i){
-    /* transfers touch many rows; auto-archives would just re-archive on the
-       next sweep — neither is undoable (a manual "markDone" is). */
+    /* transfers touch many rows, and any legacy auto-archive entries (from
+       before auto-archiving was removed) aren't undoable either; a manual
+       "markDone" is. */
     let blocked = !!e.undone || e.action === 'undo' || e.action === 'transfer' || e.action === 'autoArchive';
     for (let j = 0; j < i && !blocked; j++){
       if (newestFirst[j].target === e.target) blocked = true;
@@ -699,7 +690,7 @@ function demoSeed(){
       summary:'Added FD #8 · RICHIE POST OFFICE · ' + FDMath.fmtINR(fds[7].principal),
       before:null, after: Object.assign({}, fds[7]), undone:false }
   ];
-  return { accounts: accounts, fds: sweepMatured(fds, today, AUTO_INACTIVE_DAYS), log: annotateLog(rawLog), _rawLog: rawLog };
+  return { accounts: accounts, fds: sweepMatured(fds), log: annotateLog(rawLog), _rawLog: rawLog };
 }
 
 /* Demo-mode CRUD: mirrors what Code.gs does server-side (guard violations throw,
@@ -1017,8 +1008,9 @@ function isOnDashboard(fd){
   return fd.status === 'Active' && !!fd.showInDashboard;
 }
 
-/* Has an Active FD's end date already passed? (the grace window before it
- * auto-archives — where "Mark as done" and the "Matured Nd ago" label apply) */
+/* Has an Active FD's end date already passed? Such an FD stays Active and
+ * reads "Matured Nd ago" until someone taps "Mark as done" — it is never
+ * archived automatically. */
 function isMatured(fd){
   if (fd.status !== 'Active' || !M.parseISO(fd.endDate)) return false;
   const d = daysFromToday(fd.endDate); /* endDate − today; negative = overdue */

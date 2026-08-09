@@ -25,10 +25,9 @@ var LOG_SHEET = 'Log';
 var LOG_HEADERS = ['Id', 'Time', 'Device', 'Action', 'Target', 'Summary', 'Before', 'After', 'Undone'];
 // Optional device name sent with each mutation ("Dad's phone"); set per request.
 var CURRENT_DEVICE = '';
-// An Active FD whose end date is more than this many days in the past is
-// auto-archived to Inactive (see sweepMatured). Before then it stays Active
-// so it still shows as "matured Nd ago" and nudges a renew/withdraw.
-var AUTO_INACTIVE_DAYS = 15;
+// Matured FDs are NOT auto-archived: an Active FD whose end date has passed
+// stays Active (the app shows "Matured Nd ago") until someone taps "Mark as
+// done" (see markDone). There is no automatic archive.
 
 // Canonical field order used when talking JSON to the frontend.
 var FD_FIELDS = ['id', 'account', 'accountNumber', 'startDate', 'endDate',
@@ -97,13 +96,6 @@ function doPost(e) {
     }
 
     CURRENT_DEVICE = String(req.device || '').trim().substring(0, 40);
-
-    // Self-heal on every request: archive FDs matured past the grace window.
-    // Logged as "auto", so the requester's device isn't credited for it.
-    var reqDevice = CURRENT_DEVICE;
-    CURRENT_DEVICE = 'auto';
-    try { sweepMatured(); } catch (e) { /* never let the sweep break a request */ }
-    CURRENT_DEVICE = reqDevice;
 
     var action = String(req.action || '');
     if (action === 'list') {
@@ -414,35 +406,9 @@ function fdSnapshot(f) {
   return out;
 }
 
-/** Archive Active FDs matured more than AUTO_INACTIVE_DAYS ago (IST). Runs on
- *  every request and in the daily job; idempotent (skips non-Active rows).
- *  Logged as 'autoArchive' which is deliberately NOT undoable — undoing would
- *  just restore an FD still past the grace window, and the next sweep would
- *  re-archive it. To keep a matured FD active, renew it (edit the end date). */
-function sweepMatured() {
-  var today = isoToUtc(istDateString(0));
-  if (today === null) return 0;
-  var fds = readFds();
-  var flipped = 0;
-  for (var i = 0; i < fds.length; i++) {
-    var f = fds[i];
-    if (f.status !== 'Active') continue;
-    var end = isoToUtc(f.endDate);
-    if (end === null) continue;
-    var daysPast = Math.round((today - end) / 86400000);
-    if (daysPast > AUTO_INACTIVE_DAYS) {
-      setFdFields(f.id, { status: 'Inactive', showInDashboard: false });
-      var after = fdSnapshot(f); after.status = 'Inactive'; after.showInDashboard = false;
-      appendLog('autoArchive', 'fd:' + f.id,
-        'Auto-archived FD #' + f.id + ' · ' + f.account + ' — matured ' + f.endDate, fdSnapshot(f), after);
-      flipped++;
-    }
-  }
-  return flipped;
-}
-
-/** Manual "Mark as done": archive one matured FD immediately. Undoable — the
- *  FD is still within the grace window, so restoring it stays Active. */
+/** Manual "Mark as done": archive one matured FD immediately. Undoable —
+ *  restoring it simply makes the FD Active again. (Matured FDs are never
+ *  archived automatically; this button is the only way they become Inactive.) */
 function markDone(id) {
   var before = findFdById(id);
   if (!before) throw new Error('FD with id ' + id + ' not found');
@@ -1148,9 +1114,6 @@ function istDateString(offsetDays) {
 }
 /** Trigger target: push if any Active FD matures in {0,1,2} days IST. */
 function sendMaturityPush() {
-  // Also archive long-matured FDs daily, even if nobody opens the app.
-  CURRENT_DEVICE = 'auto';
-  try { sweepMatured(); } catch (e) { /* keep going to the push */ }
   if (!PropertiesService.getScriptProperties().getProperty('VAPID_PUBLIC')) return;
   var targets = {};
   targets[istDateString(0)] = 1; targets[istDateString(1)] = 1; targets[istDateString(2)] = 1;

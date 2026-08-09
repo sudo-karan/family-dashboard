@@ -114,15 +114,14 @@ requests that Apps Script can answer without a preflight.
   dashboard (the form disables the checkbox). `Show In Dashboard` exists so
   an *Active* FD can still be kept out of the totals (e.g. something tracked
   separately).
-- **Matured FDs auto-archive.** Once an FD's end date passes it reads
-  "Matured Nd ago" and still nudges you in *Maturing soon*; if nobody acts
-  it auto-flips to **Inactive after 15 days** (server-side, on any open or
-  the daily job — recorded in the change log). The auto-archive isn't
-  "undoable" — undoing it would just re-archive on the next check, since the
-  FD is still past the window; to keep a matured FD active, **renew it** (edit
-  the end date). A **"Mark as done"** button on the *Maturing soon* row and in
-  *All FDs* archives it instantly once you've renewed or withdrawn it, and
-  *that* is undoable from History.
+- **Matured FDs stay put until you act.** Once an FD's end date passes it
+  reads "Matured Nd ago" and keeps nudging you in *Maturing soon*, but it
+  stays **Active** and is **never archived automatically** — nothing changes
+  it behind your back. A **"Mark as done"** button on the *Maturing soon* row
+  and in *All FDs* archives it (to Inactive, off the dashboard) once you've
+  renewed or withdrawn it, and that is undoable from History. To keep tracking
+  a renewed FD instead, **edit its end date**. The *All FDs* status filter has
+  a **Matured** option to list exactly the ones waiting on you.
 - FD account numbers are **opaque strings** end to end — `50301262368467`,
   `000140451094222`, `NA`, `nsc 20159108247` all survive verbatim (the
   columns are plain-text formatted; the backend never parses them as
