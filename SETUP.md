@@ -139,18 +139,16 @@ each change.
 > version** (Deploy → Manage deployments → ✏ → New version → Deploy),
 > otherwise changes won't be logged and Undo won't work.
 
-## Matured deposits archive themselves
+## Matured deposits wait for you
 
 Once an FD's end date passes, the app shows it as **"Matured Nd ago"** and keeps
-it in *Maturing soon* as a reminder. If nobody acts, it **auto-becomes Inactive
-15 days after maturity** (it drops off the dashboard totals). This runs
-server-side whenever the app is opened, so no setup is needed — but it does need
-the current `Code.gs` deployed. A **"Mark as done"** button (on the *Maturing
-soon* row and in *All FDs*) archives a matured FD immediately once you've
-renewed or withdrawn it. Both show up in the change log; the manual "Mark as
-done" can be undone from History, while the automatic 15-day archive can't
-(undoing it would just re-archive — to keep a matured FD active, renew it by
-editing its end date).
+it in *Maturing soon* as a reminder. It **stays Active and is never archived
+automatically** — nothing changes it behind your back. A **"Mark as done"**
+button (on the *Maturing soon* row and in *All FDs*) archives a matured FD
+(to Inactive, so it drops off the dashboard totals) once you've renewed or
+withdrawn it; it's recorded in the change log and can be undone from History.
+To keep tracking a renewed FD, edit its end date instead. The *All FDs* status
+filter also has a **Matured** option that lists exactly the FDs waiting on you.
 
 ## Maturity reminders (push notifications) — optional
 
