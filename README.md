@@ -35,10 +35,13 @@ added.
   `FAMILY_PASSWORD` in Apps Script signs every device out at once.
 - **Light & dark mode** — follows the device by default, with a toggle.
 - **Change log + Undo** — every add/edit/delete shows up under a **History**
-  tab (with the device name that did it). Tap an entry to reopen the FD or
-  account in a read-only form showing exactly what was recorded, and the
-  latest change to any item can be undone — a deleted FD comes back with the
-  same ID, an edit reverts to its previous values.
+  tab (with the device name that did it), **one month at a time with no
+  limit**: it opens on this month, and a month dropdown (with how many changes
+  each month had) plus **‹ Older / Newer ›** buttons reach every earlier month.
+  Tap an entry to reopen the FD or account in a read-only form showing exactly
+  what was recorded, and the latest change to any item can be undone — a
+  deleted FD comes back with the same ID, an edit reverts to its previous
+  values.
 - **Maturity reminders (push)** — optional phone notifications 2 days before,
   1 day before, and on the maturity date (~10 AM IST), delivered to the
   installed PWA via Web Push from a daily Apps Script trigger. The push is
@@ -66,9 +69,12 @@ theme choice — all data lives in memory and in the sheet.
 **The backend is a Google Apps Script web app** (`Code.gs`) bound to the
 spreadsheet. It exposes one `doPost` endpoint accepting
 `{action: list | create | update | delete | accountCreate | accountUpdate |
-accountDelete | transferFds | undo, password, device?, …}` and
-always replies with the full fresh state `{ok, fds, accounts, log}`, so the client
-just replaces what it has — no merging, no cache to go stale. The shared
+accountDelete | transferFds | undo, password, device?, logMonth?, …}` and
+always replies with the full fresh state `{ok, fds, accounts, log, logMonth,
+logMonths}`, so the client just replaces what it has — no merging, no cache to
+go stale. `log` is every change in `logMonth` (`YYYY-MM`, default: this month)
+— no row cap — and `logMonths` lists each month that has changes, with
+counts. The shared
 family password is stored as a **script property**, never in code, and is
 checked server-side on every request. Writes are serialized with
 `LockService`. Requests are sent as `text/plain` so they stay "simple" CORS
@@ -90,9 +96,9 @@ requests that Apps Script can answer without a preflight.
 - `Log` — auto-created on the first change. One row per add/edit/delete/undo
   with a JSON *before/after image* of the affected row — those images are
   what make Undo trustworthy. **Don't edit this tab by hand.** An entry is
-  undoable only while it is the latest change to that FD/account (so an undo
-  can never silently clobber a newer edit); undo entries themselves can't be
-  undone.
+  undoable only while it is the latest change to that FD/account across the
+  *whole* log, not just the month on screen (so an undo can never silently
+  clobber a newer edit); undo entries themselves can't be undone.
 
 ## Repo map
 
