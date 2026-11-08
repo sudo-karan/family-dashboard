@@ -209,7 +209,7 @@
      (endings matter: many numbers share the same prefix) */
   .fdno{ display:inline-block; white-space:nowrap; font-variant-numeric:tabular-nums; }
   .remarks-cell{ max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
-  .date-cell{ white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .date-cell, .days-cell{ white-space:nowrap; font-variant-numeric:tabular-nums; }
   .date-red{ color:var(--red); font-weight:650; }
   .date-amber{ color:var(--amber); font-weight:650; }
   .row-actions{ white-space:nowrap; }
@@ -1024,6 +1024,19 @@ function statusLabel(fd){
   return { text: 'Active', cls: 'green' };
 }
 
+/* "Days left" cell in All FDs: days until an Active FD's end date, turning red
+ * once DAYS_LEFT_RED or fewer remain (and on/after the maturity date). Only a
+ * running FD has days left, so Inactive FDs — and any FD without a valid end
+ * date — read a muted "—". `cls` reuses the End column's classes. */
+const DAYS_LEFT_RED = 10;
+function daysLeftOf(fd){
+  const d = (fd.status === 'Active' && M.parseISO(fd.endDate)) ? daysFromToday(fd.endDate) : null;
+  if (d === null) return { text: '—', cls: ' muted' };
+  if (d < 0) return { text: 'Matured', cls: ' date-red' };
+  if (d === 0) return { text: 'Today', cls: ' date-red' };
+  return { text: d + (d === 1 ? ' day' : ' days'), cls: d <= DAYS_LEFT_RED ? ' date-red' : '' };
+}
+
 function tenureCellOf(fd){
   if (M.parseISO(fd.startDate) && M.parseISO(fd.endDate)){
     return { label: M.tenureLabel(M.diffYMD(fd.startDate, fd.endDate)), days: M.diffDays(fd.startDate, fd.endDate) };
@@ -1562,7 +1575,7 @@ function AllFDs({ fds, accounts, onEdit, onDelete, onMarkDone }){
           <thead>
             <tr>
               <th className="col-actions" aria-label="Actions"></th><th className="col-acct">Account</th>
-              <th>FD No.</th><th>Start</th><th>End</th><th>Tenure</th>
+              <th>FD No.</th><th>Start</th><th>End</th><th>Days left</th><th>Tenure</th>
               <th className="num">Rate</th><th className="num">Principal</th><th className="num">Maturity</th>
               <th className="num">Interest</th><th>Payout</th><th>Status</th><th>Dashboard</th>
               <th>Remarks</th>
@@ -1570,12 +1583,13 @@ function AllFDs({ fds, accounts, onEdit, onDelete, onMarkDone }){
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={14} className="panel-empty">No deposits match these filters.</td></tr>
+              <tr><td colSpan={15} className="panel-empty">No deposits match these filters.</td></tr>
             )}
             {filtered.map(function(f){
               const t = tenureCellOf(f);
               const i = interestOf(f);
               const sl = statusLabel(f);
+              const dl = daysLeftOf(f);
               return (
                 <tr key={f.id}>
                   <td className="col-actions row-actions stacked">
@@ -1591,6 +1605,7 @@ function AllFDs({ fds, accounts, onEdit, onDelete, onMarkDone }){
                   <td><span className="fdno">{f.accountNumber || '—'}</span></td>
                   <td className="date-cell">{M.fmtDate(f.startDate)}</td>
                   <td className={'date-cell' + endCls(f)}>{M.fmtDate(f.endDate)}</td>
+                  <td className={'days-cell' + dl.cls}>{dl.text}</td>
                   <td><div className="cell-main">{t.label}</div><div className="cell-sub num" style={{ textAlign:'left' }}>{t.days !== null ? t.days + ' days' : ''}</div></td>
                   <td className="num">{M.fmtRate(f.rate)}</td>
                   <td className="num">{M.fmtINR(f.principal || '')}{M.fmtINRWords(f.principal) ? <div className="cell-sub cell-words">{M.fmtINRWords(f.principal)}</div> : null}</td>
@@ -1611,7 +1626,7 @@ function AllFDs({ fds, accounts, onEdit, onDelete, onMarkDone }){
             <tr>
               <td className="col-actions"></td>
               <td className="col-acct">{filtered.length} of {fds.length} deposits</td>
-              <td colSpan={5}></td>
+              <td colSpan={6}></td>
               <td className="num">{M.fmtINR(totP)}{M.fmtINRWords(totP) ? <div className="cell-sub cell-words">{M.fmtINRWords(totP)}</div> : null}</td>
               <td className="num">{M.fmtINR(totM)}{M.fmtINRWords(totM) ? <div className="cell-sub cell-words">{M.fmtINRWords(totM)}</div> : null}</td>
               <td className="num">{M.fmtINR(totM - totP)}{M.fmtINRWords(totM - totP) ? <div className="cell-sub cell-words">{M.fmtINRWords(totM - totP)}</div> : null}</td>

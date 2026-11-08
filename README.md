@@ -9,7 +9,9 @@ added.
 - **Dashboard** — total principal, total at maturity, interest to earn,
   what's maturing in the next 120 days (or overdue), breakdowns by person and
   by account.
-- **All FDs** — filter, sort, search, edit, delete, export CSV.
+- **All FDs** — filter, sort, search, edit, delete, export CSV. A **Days
+  left** column (right after End) counts down to each active FD's maturity
+  and turns red once 10 or fewer days remain.
 - **Accounts** — add, edit, delete, and **transfer** FDs between accounts: a
   checklist lets you pick exactly which FDs to move (in either direction),
   with each FD's details shown. Renaming an account updates every FD under it,
