@@ -4,7 +4,9 @@
  * deploy, and the last good copy is served only when the device is offline.
  * POSTs (the Apps Script API) are never intercepted or cached.
  */
-var CACHE = 'fd-tracker-v2';
+// v3: the page no longer loads Babel (the app comes precompiled); the new name
+// makes 'activate' below drop the old cache and its ~3 MB copy of it.
+var CACHE = 'fd-tracker-v3';
 
 self.addEventListener('install', function () {
   self.skipWaiting();

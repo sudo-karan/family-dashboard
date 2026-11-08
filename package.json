@@ -1,0 +1,12 @@
+{
+  "name": "family-fd-tracker",
+  "private": true,
+  "description": "Compiles the app's JSX (src/app.jsx) into index.html. See README: Editing the app.",
+  "scripts": {
+    "build": "node tools/build.js",
+    "check": "node tools/build.js --check"
+  },
+  "devDependencies": {
+    "@babel/standalone": "7.26.4"
+  }
+}

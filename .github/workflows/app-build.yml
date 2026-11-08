@@ -1,0 +1,24 @@
+# index.html runs a compiled copy of src/app.jsx. This fails a pull request, or
+# a push to main, whose index.html doesn't match src/app.jsx — e.g. the JSX was
+# edited but `npm run build` wasn't run, or the compiled block was edited by hand.
+name: App build is up to date
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+      - run: npm ci
+      - run: npm run check
