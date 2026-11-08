@@ -69,12 +69,16 @@ added.
 
 ## Architecture (in prose)
 
-There are exactly three parts and no build step.
+There are exactly three parts. Running or hosting the app needs no build
+step; only *editing* its screens does (one command — see
+[Editing the app](#editing-the-app)).
 
 **The frontend is `index.html`** (plus a few PWA side-files: a manifest,
-icons, and a tiny network-first service worker). React, ReactDOM and Babel
-are loaded from cdnjs and the JSX is transpiled in the browser — no build
-step; the page also runs by double-clicking it locally. With
+icons, and a tiny network-first service worker). React and ReactDOM are
+loaded from cdnjs. The screens are written in JSX in `src/app.jsx` and
+compiled ahead of time into plain JavaScript inside `index.html`, so a phone
+never downloads a compiler or compiles anything when the app opens; the page
+also runs by double-clicking it locally. With
 `APPS_SCRIPT_URL` left empty it boots into a self-contained demo with sample
 data; with the URL set it talks to the backend. The only things kept on the
 device are two cookies: the remembered sign-in (cleared by Sign out) and the
@@ -121,7 +125,10 @@ requests that Apps Script can answer without a preflight.
 
 | File | What it is |
 |---|---|
-| `index.html` | The frontend (one page, no build step) |
+| `index.html` | The frontend — the one page that's hosted (styles, helpers, and the compiled app) |
+| `src/app.jsx` | The app's screens in JSX: the source of the compiled block in `index.html` |
+| `tools/build.js`, `package.json` | `npm run build` compiles `src/app.jsx` into `index.html`; `npm run check` verifies they match |
+| `.github/workflows/app-build.yml` | Runs `npm run check` on every push and pull request |
 | `manifest.webmanifest`, `sw.js`, `icons/` | PWA bits: install metadata, network-first service worker, app icons |
 | `Code.gs` | Apps Script backend — paste into the sheet's script editor |
 | `SETUP.md` | One-time deployment guide (sheet → script → Pages) |
@@ -157,3 +164,24 @@ requests that Apps Script can answer without a preflight.
 
 Open `index.html` (or the hosted page) with `APPS_SCRIPT_URL` empty, type any
 password, and explore the demo. Deployment for real use: see [SETUP.md](SETUP.md).
+
+## Editing the app
+
+The screens (everything React draws) are written in JSX in `src/app.jsx`.
+`index.html` runs a compiled copy of them, between its
+`BEGIN GENERATED APP` / `END GENERATED APP` markers. To change a screen:
+
+1. Once, with [Node.js](https://nodejs.org) installed: `npm install`.
+2. Edit `src/app.jsx`.
+3. Run `npm run build` — it rewrites only the generated block in `index.html`.
+4. Commit **both** files.
+
+Styles, the number/date helpers (`FDMath`), cookies (`FDPrefs`), the demo
+data and `APPS_SCRIPT_URL` are in `index.html` itself, outside the generated
+block, and are edited there directly. Never edit the generated block by hand:
+the next build replaces it. A GitHub check (`npm run check`) fails any push or
+pull request whose `index.html` doesn't match `src/app.jsx`.
+
+The build uses the same compiler and settings the page used to load into
+every phone (Babel 7.26.4, `react` preset), so the compiled code is what each
+phone used to produce for itself on every launch — only now it's done once.

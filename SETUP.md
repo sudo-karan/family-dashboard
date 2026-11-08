@@ -84,8 +84,10 @@ in **Demo mode** (sample data, nothing saved) — handy for trying the UI first.
 ## 5. Host it on GitHub Pages
 
 1. Create a GitHub repository (private is fine — Pages still works) and commit
-   **all the files in this repo** (`index.html`, `manifest.webmanifest`,
-   `sw.js`, and the `icons/` folder) to the `main` branch.
+   **all the files in this repo** to the `main` branch. The page itself needs
+   only `index.html`, `manifest.webmanifest`, `sw.js` and the `icons/` folder;
+   `src/`, `tools/` and `package.json` are for editing the app (see the
+   README) and are harmless to host.
 2. Repo **Settings → Pages → Build and deployment**: Source = **Deploy from a
    branch**, Branch = **main**, folder = **/ (root)**. Save.
 3. After a minute your app is at `https://<username>.github.io/<repo>/`.
