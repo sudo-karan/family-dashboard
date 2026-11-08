@@ -36,9 +36,11 @@ added.
 - **Light & dark mode** — follows the device by default, with a toggle.
 - **Clear save feedback** — saves stay honest (nothing changes on screen until
   the sheet has accepted it), so while one runs a bar across the top and a
-  **Saving…** pill show it's working; then a toast confirms exactly what was
-  saved ("Saved — changes to FD #12") and the changed row glows for a few
-  seconds so it's easy to spot.
+  **Saving…** pill show it's working; then a message at the bottom of the
+  screen (never over the tabs) confirms exactly what was saved ("Saved —
+  changes to FD #12") and the changed row glows for a few seconds so it's easy
+  to spot. If a save fails, its dialog stays open and says why, right there,
+  so it can be tried again or cancelled.
 - **Fewer, faster round trips** — each request reads every sheet tab in one
   go, and switching tabs re-pulls the sheet only when what's on screen is over
   a minute old (every save already brings back the fresh sheet).
@@ -51,8 +53,9 @@ added.
   deleted FD comes back with the same ID, an edit reverts to its previous
   values. Undo is only offered while the item still looks the way that change
   left it: if it was since moved to another account, renamed with its
-  account, or edited straight in the sheet, Undo is hidden (and refused) so an
-  old snapshot can never overwrite newer details.
+  account, edited straight in the sheet, or its row was copied (two rows with
+  one ID), Undo is hidden (and refused) so an old snapshot can never overwrite
+  newer details.
 - **Maturity reminders (push)** — optional phone notifications 2 days before,
   1 day before, and on the maturity date (~10 AM IST), delivered to the
   installed PWA via Web Push from a daily Apps Script trigger. The push is

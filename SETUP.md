@@ -203,7 +203,9 @@ Notes & limits:
 The app is the comfortable way to add FDs, but editing the sheet directly is
 fine — that's the point of keeping the sheet as the source of truth. If you
 add a row by hand you may leave **ID** blank; the backend assigns the next
-number automatically the next time anyone opens the app.
+number automatically the next time anyone opens the app. If you copy an
+existing row to make a new one, **clear the copied ID** — two rows with the
+same ID look like one FD to the app, and History won't offer Undo for it.
 
 ## The security model, honestly
 

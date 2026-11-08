@@ -281,9 +281,13 @@
   .check-row{ display:flex; align-items:center; gap:9px; font-size:14px; padding-top:4px; }
   .check-row input{ width:17px; height:17px; accent-color:var(--accent); }
 
-  .toast{ position:fixed; left:50%; top:calc(14px + env(safe-area-inset-top, 0px)); transform:translateX(-50%); z-index:90;
+  /* Messages stack at the bottom centre — never over the tabs or the top
+     buttons — each as wide as its text needs (up to 560px), so it wraps less. */
+  .toast-stack{ position:fixed; left:0; right:0; bottom:calc(16px + env(safe-area-inset-bottom, 0px)); z-index:90;
+    display:flex; flex-direction:column; align-items:center; gap:8px; padding:0 12px; pointer-events:none; }
+  .toast{ pointer-events:auto; max-width:100%; max-width:min(560px, 100%);
     background:#1C2B28; color:#fff; border-radius:11px; padding:11px 16px; font-size:14px;
-    box-shadow:var(--shadow); display:flex; gap:14px; align-items:center; max-width:90vw; }
+    box-shadow:var(--shadow); display:flex; gap:14px; align-items:center; }
   .toast.success{ background:#0E6E55; }
   .toast.error{ background:#A93A36; }
   .toast button{ border:0; background:transparent; color:#fff; font-size:16px; padding:0; }
@@ -325,6 +329,7 @@
   .confirm-modal{ max-width:430px; }
   .confirm-summary{ background:var(--surface-2); border-radius:9px; padding:10px 14px; margin:6px 0 4px; }
   .confirm-summary > div{ margin:2px 0; overflow-wrap:anywhere; }
+  .frm-err.confirm-err{ margin:10px 0 2px; font-size:14px; line-height:1.45; overflow-wrap:anywhere; }
   .btn.danger-solid{ background:var(--red); border-color:var(--red); color:#fff; }
   .btn.danger-solid:hover{ filter:brightness(.92); }
   html[data-theme="dark"] .btn.danger-solid{ color:#2D1210; }
@@ -672,11 +677,13 @@ function normFdField(f, v){
 /* Mirrors Code.gs undoDrifted_: true when the item a logged change touched no
  * longer looks the way that change left it (moved by a transfer, renamed with
  * its account, or edited in the sheet) — undoing it would replay an old
- * snapshot over those newer changes, so Undo is hidden and refused. */
+ * snapshot over those newer changes, so Undo is hidden and refused. An ID or
+ * name found on more than one row (a copied row) counts as changed too. */
 function undoDriftedOf(action, after, fds, accounts){
   if (!after) return false;
   const lower = function(s){ return String(s == null ? '' : s).trim().toLowerCase(); };
-  const fdNow = function(){ return (fds || []).find(function(f){ return normFdField('id', f.id) === normFdField('id', after.id); }); };
+  const onlyOne = function(list){ return list.length === 1 ? list[0] : null; };
+  const fdNow = function(){ return onlyOne((fds || []).filter(function(f){ return normFdField('id', f.id) === normFdField('id', after.id); })); };
   if (action === 'create' || action === 'update'){
     const cur = fdNow();
     return !cur || FD_LOG_FIELDS.some(function(f){ return normFdField(f, cur[f]) !== normFdField(f, after[f]); });
@@ -687,7 +694,7 @@ function undoDriftedOf(action, after, fds, accounts){
       normFdField('showInDashboard', cur.showInDashboard) !== normFdField('showInDashboard', after.showInDashboard);
   }
   if (action === 'accountCreate' || action === 'accountUpdate'){
-    const a = (accounts || []).find(function(x){ return lower(x.name) === lower(after.name); });
+    const a = onlyOne((accounts || []).filter(function(x){ return lower(x.name) === lower(after.name); }));
     return !a || String(a.person || '').trim() !== String(after.person || '').trim() ||
       String(a.bank || '').trim() !== String(after.bank || '').trim();
   }
@@ -2447,7 +2454,7 @@ function TransferDialog({ account, accounts, fds, forceOut, busy, onCancel, onSu
 /* ============================== confirmation dialog ============================== */
 /* One reusable yes/no step for add / edit / delete. Cancel is the focused,
  * safe default, so a stray Enter or mis-tap never destroys anything. */
-function ConfirmDialog({ title, lines, confirmLabel, danger, busy, onConfirm, onCancel }){
+function ConfirmDialog({ title, lines, confirmLabel, danger, busy, error, onConfirm, onCancel }){
   useEffect(function(){
     function onKey(e){ if (e.key === 'Escape') onCancel(); }
     document.addEventListener('keydown', onKey);
@@ -2463,6 +2470,7 @@ function ConfirmDialog({ title, lines, confirmLabel, danger, busy, onConfirm, on
               return <div key={i} className={i === 0 ? '' : 'muted small'} style={i === 0 ? { fontWeight:650 } : undefined}>{l}</div>;
             })}
           </div>
+          {error ? <div className="frm-err confirm-err" role="alert">{error}</div> : null}
         </div>
         <div className="modal-foot">
           <button type="button" className="btn" autoFocus onClick={onCancel}>Cancel</button>
@@ -2486,7 +2494,10 @@ function App(){
   const [editing, setEditing] = useState(null);      /* null | 'new' | fd */
   const [accEditing, setAccEditing] = useState(null); /* null | 'new' | account */
   const [transferring, setTransferring] = useState(null); /* {account, forceOut} */
-  const [confirm, setConfirm] = useState(null);      /* {title, lines, confirmLabel, danger, run} */
+  const [confirm, setConfirm] = useState(null);      /* {title, lines, confirmLabel, danger, run, error} */
+  const confirmRef = useRef(null);                    /* the dialog open right now (read after an await) */
+  useEffect(function(){ confirmRef.current = confirm; }, [confirm]);
+  const saveErrRef = useRef('');                      /* why the last save failed */
   const [viewing, setViewing] = useState(null);      /* a log entry being inspected read-only */
   /* ---- History month + data freshness --------------------------------------
    * want = the month History should show (month null = "this month", the
@@ -2498,7 +2509,7 @@ function App(){
   const [want, setWant] = useState(wantRef.current);
   const loadedSeqRef = useRef(0);
   const [loadedSeq, setLoadedSeq] = useState(0);
-  const shownMonthRef = useRef(null); /* the month whose log is on screen */
+  const shownWantRef = useRef(null);  /* the want.month whose log is on screen (null = this month) */
   const lastSyncRef = useRef(0);      /* when the last reply arrived (ms) */
   function wantMonth(m){
     const w = { month: m || null, seq: wantRef.current.seq + 1 };
@@ -2508,7 +2519,10 @@ function App(){
   function markLoaded(seq){
     if (seq > loadedSeqRef.current){ loadedSeqRef.current = seq; setLoadedSeq(seq); }
   }
-  function atThisMonth(){ return wantRef.current.month === null && loadedSeqRef.current >= wantRef.current.seq; }
+  /* History is showing, or already fetching, this month: going "back to this
+   * month" again must not start another load (that would only discard the
+   * reply already on its way and make the wait longer). */
+  function wantsThisMonth(){ return wantRef.current.month === null; }
   function withLogMonth(body){
     const m = wantRef.current.month;
     return m ? Object.assign({}, body, { logMonth: m }) : body;
@@ -2518,7 +2532,7 @@ function App(){
    * sits on "Loading…" or keeps its controls aimed at a month it can't show. */
   function rollBackWant(asked){
     if (wantRef.current.seq === asked.seq && loadedSeqRef.current < asked.seq){
-      markLoaded(wantMonth(shownMonthRef.current).seq);
+      markLoaded(wantMonth(shownWantRef.current).seq);
     }
   }
   /* Apply a backend reply. `asked` = the want ({month, seq}) the request went
@@ -2528,7 +2542,7 @@ function App(){
    * History then shows the latest-15 list it sends. */
   function applyServer(j, asked){
     const fresh = asked.seq === wantRef.current.seq;
-    if (fresh){ shownMonthRef.current = j.logMonth || null; markLoaded(asked.seq); }
+    if (fresh){ shownWantRef.current = asked.month; markLoaded(asked.seq); }
     lastSyncRef.current = Date.now();
     setData(function(prev){
       const keep = !!prev && !fresh;
@@ -2544,17 +2558,24 @@ function App(){
   /* Demo (no network): slice the in-memory log for the month wanted. */
   function demoLogView(d){
     const v = logViewOf(d._rawLog, wantRef.current.month, thisMonthKey(), d.fds, d.accounts);
-    shownMonthRef.current = v.logMonth;
+    shownWantRef.current = wantRef.current.month;
     return Object.assign({}, d, v);
   }
-  function setDemo(d){ shownMonthRef.current = d.logMonth || null; markLoaded(wantRef.current.seq); setData(d); }
+  function setDemo(d){ shownWantRef.current = wantRef.current.month; markLoaded(wantRef.current.seq); setData(d); }
 
-  /* Requests in flight, for the top bar ("Saving…" while any save runs). */
-  const [inflight, setInflight] = useState({ all: 0, saves: 0 });
+  /* Requests in flight, for the top bar and the "Saving…" / "Loading…" pill.
+   * Mirrored in a ref so code finishing after an await sees the live count. */
+  const inflightRef = useRef({ all: 0, saves: 0 });
+  const [inflight, setInflight] = useState(inflightRef.current);
+  function countInflight(dAll, dSaves){
+    const p = inflightRef.current;
+    inflightRef.current = { all: p.all + dAll, saves: p.saves + dSaves };
+    setInflight(inflightRef.current);
+  }
   async function call(body, isSave){
-    setInflight(function(p){ return { all: p.all + 1, saves: p.saves + (isSave ? 1 : 0) }; });
+    countInflight(1, isSave ? 1 : 0);
     try { return await postApi(body); }
-    finally { setInflight(function(p){ return { all: p.all - 1, saves: p.saves - (isSave ? 1 : 0) }; }); }
+    finally { countInflight(-1, isSave ? -1 : 0); }
   }
 
   /* After a save, the changed FD / account rows glow for a few seconds. */
@@ -2611,7 +2632,7 @@ function App(){
     })();
   }, []);
 
-  function notifyOk(msg){ setToast({ msg: msg, kind: 'success' }); }
+  function notifyOk(msg, fromSave){ setToast({ msg: msg, kind: 'success', save: !!fromSave }); }
   function notifyError(msg){ setToast({ msg: msg, kind: 'error' }); }
 
   /* reflect the current reminder state + this device's endpoint once signed in */
@@ -2697,7 +2718,7 @@ function App(){
 
   function logout(){
     FDPrefs.clearAuth();
-    markLoaded(wantMonth(null).seq); shownMonthRef.current = null; lastSyncRef.current = 0;
+    markLoaded(wantMonth(null).seq); shownWantRef.current = null; lastSyncRef.current = 0;
     setAuth(null);
     setData(null);
     setTab('dashboard');
@@ -2705,12 +2726,16 @@ function App(){
     setToast(null);
   }
 
-  /* Every save goes through here, and stays honest: nothing changes on screen
-   * until the sheet has accepted it. Meanwhile the top bar says "Saving…";
-   * afterwards a toast confirms what was saved and the changed row glows.
+  /* Every save goes through here (always from a confirm dialog), and stays
+   * honest: nothing changes on screen until the sheet has accepted it.
+   * Meanwhile the top bar runs and a pill says "Saving…"; afterwards a toast
+   * confirms what was saved and the changed row glows. If it fails, the reason
+   * is shown inside that dialog (see runConfirm) and false is returned.
    * opts: { saved: toast text, flash: {fds, account} } to override either. */
+  const FAIL_PREFIX = { undo: 'Couldn’t undo', delete: 'Not deleted', accountDelete: 'Not deleted', transferFds: 'Not moved' };
   async function mutate(body, opts){
     setBusy(true);
+    setToast(null); /* an older "✓ …" must not sit where this save's "Saving…" goes */
     try {
       const fullBody = Object.assign({}, body, { device: FDPrefs.getDevice() });
       const prevFds = data ? data.fds : [];
@@ -2725,10 +2750,12 @@ function App(){
         setDemo(next);
         nextFds = next.fds;
       }
-      notifyOk(afterSave(body, prevFds, nextFds, opts));
+      notifyOk(afterSave(body, prevFds, nextFds, opts), true);
       return true;
     } catch (e) {
-      notifyError(e.message === 'unauthorized' ? 'Session rejected — the password may have changed. Reload the page and sign in again.' : 'Save failed: ' + e.message);
+      saveErrRef.current = e.message === 'unauthorized'
+        ? 'Session rejected — the password may have changed. Reload the page and sign in again.'
+        : (FAIL_PREFIX[body.action] || 'Not saved') + ': ' + e.message;
       return false;
     } finally {
       setBusy(false);
@@ -2767,10 +2794,18 @@ function App(){
     })[a] || 'Saved';
   }
 
-  /* Every add / edit / delete passes through one styled yes/no dialog. */
+  /* Every add / edit / delete passes through one styled yes/no dialog. On
+   * success it closes; on failure it stays open and says why, right where the
+   * parent is looking (or, if they closed it meanwhile, a toast does). */
   async function runConfirm(){
-    const ok = await confirm.run();
-    if (ok) setConfirm(null);
+    const mine = confirm;
+    const same = function(c){ return !!c && c.run === mine.run; };
+    if (mine.error) setConfirm(function(c){ return same(c) ? Object.assign({}, c, { error: '' }) : c; });
+    const ok = await mine.run();
+    if (ok){ setConfirm(function(c){ return same(c) ? null : c; }); return; }
+    const msg = saveErrRef.current;
+    if (same(confirmRef.current)) setConfirm(function(c){ return same(c) ? Object.assign({}, c, { error: msg }) : c; });
+    else notifyError(msg);
   }
 
   function fdSummary(fd){
@@ -2898,7 +2933,13 @@ function App(){
       ],
       confirmLabel: 'Yes, undo',
       danger: false,
-      run: function(){ return mutate({ action:'undo', logId: entry.id }, { saved: 'Undone: ' + entry.summary, flash: flashFromTarget(entry.target) }); }
+      run: async function(){
+        const ok = await mutate({ action:'undo', logId: entry.id }, { saved: 'Undone: ' + entry.summary, flash: flashFromTarget(entry.target) });
+        /* refused: the list on screen was out of date — re-pull it quietly, so
+           an Undo link that can no longer work disappears */
+        if (!ok) refresh({ quiet: true });
+        return ok;
+      }
     });
   }
 
@@ -2910,19 +2951,25 @@ function App(){
    * whose month may differ from the one that refresh asked for).
    * opts.wantInitiator: this refresh is the one fetching a newly wanted month;
    * if it fails, History falls back to the month on screen.
-   * The top-bar button passes its click event here, which is neither. */
+   * opts.quiet: no toast either way (a follow-up re-pull after a refused Undo).
+   * The top-bar button passes its click event here, which is none of these. */
   async function refresh(opts){
     const force = !!(opts && opts.force === true);
+    const quiet = !!(opts && opts.quiet === true);
     if (!LIVE || (refreshing && !force)) return;
     setRefreshing(true);
     const asked = wantRef.current;
     try {
       const j = await call(withLogMonth({ action:'list', password: auth.password }));
       applyServer(j, asked);
-      notifyOk('Refreshed');
+      /* never over a save: not while one runs (its "Saving…" stays up), and
+         not in place of the toast confirming one */
+      if (!quiet && inflightRef.current.saves === 0){
+        setToast(function(t){ return t && t.save ? t : { msg: 'Refreshed', kind: 'success' }; });
+      }
     } catch (e) {
       if (opts && opts.wantInitiator === true) rollBackWant(asked);
-      notifyError('Refresh failed: ' + e.message);
+      if (!quiet) notifyError('Refresh failed: ' + e.message);
     } finally {
       setRefreshing(false);
     }
@@ -2951,7 +2998,7 @@ function App(){
   function switchTab(t){
     if (t !== tab){
       if (t === 'history'){
-        const reset = !atThisMonth(); /* History always opens on this month */
+        const reset = !wantsThisMonth(); /* History always opens on this month */
         if (reset){
           const w = wantMonth(null);
           if (!LIVE){ setData(function(prev){ return prev ? demoLogView(prev) : prev; }); markLoaded(w.seq); }
@@ -3006,7 +3053,7 @@ function App(){
           <button type="button" className={'tab-btn' + (tab === 'accounts' ? ' on' : '')}
                   onClick={function(){ switchTab('accounts'); }}>Accounts</button>
           <button type="button" className={'tab-btn' + (tab === 'history' ? ' on' : '')}
-                  onClick={function(){ if (tab === 'history'){ if (!atThisMonth()) pickLogMonth(null); } else switchTab('history'); }}>History</button>
+                  onClick={function(){ if (tab === 'history'){ if (!wantsThisMonth()) pickLogMonth(null); } else switchTab('history'); }}>History</button>
           {LIVE && (
             <button type="button" className={'tab-btn' + (tab === 'reminders' ? ' on' : '')}
                     onClick={function(){ switchTab('reminders'); }}>Reminders</button>
@@ -3080,7 +3127,7 @@ function App(){
       {confirm !== null && (
         <ConfirmDialog title={confirm.title} lines={confirm.lines}
                 confirmLabel={confirm.confirmLabel} danger={confirm.danger}
-                busy={busy}
+                busy={busy} error={confirm.error}
                 onConfirm={runConfirm}
                 onCancel={function(){ setConfirm(null); }} />
       )}
@@ -3109,17 +3156,19 @@ function App(){
       })()}
 
       {inflight.all > 0 && <div className="sync-bar" aria-hidden="true"><div className="sync-bar-fill" /></div>}
-      {inflight.all > 0 && !toast && (
-        <div className="toast pending" role="status">
-          <span className="sync-dot" aria-hidden="true" />{inflight.saves > 0 ? 'Saving…' : 'Loading…'}
-        </div>
-      )}
-      {toast && (
-        <div className={'toast ' + toast.kind} role={toast.kind === 'error' ? 'alert' : 'status'}>
-          <span>{toast.kind === 'success' ? '✓ ' : ''}{toast.msg}</span>
-          <button type="button" aria-label="Dismiss" onClick={function(){ setToast(null); }}>✕</button>
-        </div>
-      )}
+      <div className="toast-stack">
+        {toast && (
+          <div className={'toast ' + toast.kind} role={toast.kind === 'error' ? 'alert' : 'status'}>
+            <span>{toast.kind === 'success' ? '✓ ' : ''}{toast.msg}</span>
+            <button type="button" aria-label="Dismiss" onClick={function(){ setToast(null); }}>✕</button>
+          </div>
+        )}
+        {inflight.all > 0 && (
+          <div className="toast pending" role="status">
+            <span className="sync-dot" aria-hidden="true" />{inflight.saves > 0 ? 'Saving…' : 'Loading…'}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

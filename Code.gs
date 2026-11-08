@@ -722,15 +722,28 @@ function parseJsonSafe(s) {
   try { return JSON.parse(String(s)); } catch (e) { return null; }
 }
 
-function indexFds_(fds) {
+/* Index by ID / by name. A key on more than one row (a row copied by hand in
+ * the sheet keeps its ID) maps to DUP_: Undo writes to the FIRST such row,
+ * so it can't tell which one a logged change meant, and treats it as changed. */
+var DUP_ = { duplicate: true };
+function indexBy_(items, keyOf) {
   var m = {};
-  for (var i = 0; i < (fds || []).length; i++) m['k' + toNumber(fds[i].id)] = fds[i];
+  for (var i = 0; i < (items || []).length; i++) {
+    var k = 'k' + keyOf(items[i]);
+    m[k] = m.hasOwnProperty(k) ? DUP_ : items[i];
+  }
   return m;
 }
+function indexFds_(fds) {
+  return indexBy_(fds, function (f) { return toNumber(f.id); });
+}
 function indexAccounts_(accounts) {
-  var m = {};
-  for (var i = 0; i < (accounts || []).length; i++) m['k' + String(accounts[i].name || '').trim().toLowerCase()] = accounts[i];
-  return m;
+  return indexBy_(accounts, function (a) { return String(a.name || '').trim().toLowerCase(); });
+}
+/** The single item under key k, or null when there is none or more than one. */
+function onlyOne_(m, k) {
+  var v = m.hasOwnProperty(k) ? m[k] : null;
+  return v === DUP_ ? null : v;
 }
 /** Same FD on every logged field, compared through the sheet's own coercion. */
 function sameFd_(cur, snap) {
@@ -744,20 +757,21 @@ function sameFd_(cur, snap) {
  *  change left it: it was moved by a transfer, renamed along with its
  *  account, or edited straight in the sheet — none of which writes an 'fd:N'
  *  Log row, so the newer-entry rule can't see them. Undoing such an entry
- *  would replay an old snapshot over those newer changes. */
+ *  would replay an old snapshot over those newer changes. A copied row
+ *  (same ID or name on two rows) also counts: see indexBy_. */
 function undoDrifted_(action, after, fdById, accountByName) {
   if (!after) return false;
   if (action === 'create' || action === 'update') {
-    var cur = fdById['k' + toNumber(after.id)];
+    var cur = onlyOne_(fdById, 'k' + toNumber(after.id));
     return !cur || !sameFd_(cur, after);
   }
   if (action === 'markDone') { // its undo only rewrites these two cells
-    var c2 = fdById['k' + toNumber(after.id)];
+    var c2 = onlyOne_(fdById, 'k' + toNumber(after.id));
     return !c2 || coerceField('status', c2.status) !== coerceField('status', after.status) ||
       toBool(c2.showInDashboard) !== toBool(after.showInDashboard);
   }
   if (action === 'accountCreate' || action === 'accountUpdate') {
-    var a = accountByName['k' + String(after.name || '').trim().toLowerCase()];
+    var a = onlyOne_(accountByName, 'k' + String(after.name || '').trim().toLowerCase());
     return !a || String(a.person || '').trim() !== String(after.person || '').trim() ||
       String(a.bank || '').trim() !== String(after.bank || '').trim();
   }
