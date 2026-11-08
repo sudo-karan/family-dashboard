@@ -140,7 +140,9 @@ each change.
 > version** (Deploy → Manage deployments → ✏ → New version → Deploy),
 > otherwise changes won't be logged and Undo won't work. Until you do, the
 > History tab can only show the 15 most recent changes (it says so on the
-> page); after redeploying it can browse every month.
+> page); after redeploying it can browse every month, Undo double-checks that
+> nothing has changed the item since, and every request makes about half as
+> many calls to Google (so saves and refreshes come back sooner).
 
 ## Matured deposits wait for you
 
@@ -201,7 +203,9 @@ Notes & limits:
 The app is the comfortable way to add FDs, but editing the sheet directly is
 fine — that's the point of keeping the sheet as the source of truth. If you
 add a row by hand you may leave **ID** blank; the backend assigns the next
-number automatically the next time anyone opens the app.
+number automatically the next time anyone opens the app. If you copy an
+existing row to make a new one, **clear the copied ID** — two rows with the
+same ID look like one FD to the app, and History won't offer Undo for it.
 
 ## The security model, honestly
 
