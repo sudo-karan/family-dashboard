@@ -129,15 +129,18 @@ To import each CSV into the Google Sheet:
 ## The change log
 
 A third tab named **`Log`** appears automatically the first time anyone adds,
-edits or deletes something through the app. It powers the dashboard's
-"Recent changes" panel and the **Undo** button — don't rename it or edit its
-rows by hand (the Before/After columns hold the data Undo restores). The
+edits or deletes something through the app. It powers the **History** tab —
+every change, shown a month at a time (this month first; pick any earlier month
+from the dropdown) — and the **Undo** button. Don't rename it or edit its rows
+by hand (the Before/After columns hold the data Undo restores). The
 optional "Device name" on the sign-in screen is what shows up as *who* made
 each change.
 
 > Updating from an earlier version? Re-paste `Code.gs` and publish a **new
 > version** (Deploy → Manage deployments → ✏ → New version → Deploy),
-> otherwise changes won't be logged and Undo won't work.
+> otherwise changes won't be logged and Undo won't work. Until you do, the
+> History tab can only show the 15 most recent changes (it says so on the
+> page); after redeploying it can browse every month.
 
 ## Matured deposits wait for you
 

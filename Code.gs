@@ -136,8 +136,12 @@ function doPost(e) {
     // this, the read in the same request can still see pre-change data
     // (classic Apps Script behaviour, most visible after deleteRow).
     SpreadsheetApp.flush();
+    // The change log for the month the History page is showing (req.logMonth,
+    // 'YYYY-MM'; default: this month) — every entry of it, no cap.
+    var logView = readLogView(req.logMonth);
     return jsonOut({
-      ok: true, fds: readFds(), accounts: readAccounts(), log: readLog(15),
+      ok: true, fds: readFds(), accounts: readAccounts(),
+      log: logView.log, logMonth: logView.logMonth, logMonths: logView.logMonths,
       vapidPublic: PropertiesService.getScriptProperties().getProperty('VAPID_PUBLIC') || '',
       pushSubs: readSubsPublic()
     });
@@ -664,50 +668,91 @@ function appendLog(action, target, summary, before, after) {
   }
 }
 
-/** Newest-first recent entries with canUndo computed: an entry is undoable
- *  only while it is the latest change to its target (never clobber a newer
- *  edit), is not an undo itself, and has not already been undone. */
 function parseJsonSafe(s) {
   if (!s) return null;
   try { return JSON.parse(String(s)); } catch (e) { return null; }
 }
 
-function readLog(limit) {
-  var sheet;
-  try { sheet = ensureLogSheet(); } catch (e) { return []; }
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  var n = Math.min(lastRow - 1, 50);
+/** One calendar month of the change log, newest first, with NO row cap — plus
+ *  every month that has entries (with counts) so the History page can switch
+ *  between them. `month` is 'YYYY-MM', or 'undated' for rows whose Time can't
+ *  be read; anything else falls back to the current month in the sheet's
+ *  timezone (the same timezone appendLog stamps Time in).
+ *
+ *  canUndo is computed over the WHOLE log, not just the month shown: an entry
+ *  is undoable only while no newer entry (in any month) touches the same
+ *  target, it is not itself an undo or a transfer (transfers are reversed by
+ *  another transfer) or a legacy auto-archive, and it has not been undone —
+ *  the same rule undoLog enforces.
+ *
+ *  Cost stays flat as the log grows: the light columns (Id..Summary, Undone)
+ *  are read for every row, but the heavy Before/After JSON only for the rows
+ *  of the month being returned. */
+function readLogView(month) {
   var tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
-  var values = sheet.getRange(lastRow - n + 1, 1, n, LOG_HEADERS.length).getValues();
-  var entries = [];
-  for (var r = values.length - 1; r >= 0; r--) { // newest first
-    var v = values[r];
-    entries.push({
-      id: toNumber(v[0]),
-      time: v[1] instanceof Date ? Utilities.formatDate(v[1], tz, 'yyyy-MM-dd HH:mm') : String(v[1] || ''),
-      device: String(v[2] == null ? '' : v[2]),
-      action: String(v[3] || ''),
-      target: String(v[4] || ''),
-      summary: String(v[5] || ''),
-      // full snapshots so the app can show exactly what was recorded
-      before: parseJsonSafe(v[6]),
-      after: parseJsonSafe(v[7]),
-      undone: toBool(v[8])
-    });
-  }
-  for (var i = 0; i < entries.length; i++) {
-    var e = entries[i];
-    // transfers move many rows and are reversible by another transfer, not undo
-    // 'autoArchive' is non-undoable: undo would restore an FD still past the
-    // grace window, and the next sweep would immediately re-archive it.
-    var blocked = e.undone || e.action === 'undo' || e.action === 'transfer' || e.action === 'autoArchive';
-    for (var j = 0; j < i && !blocked; j++) { // entries[j] are newer
-      if (entries[j].target === e.target) blocked = true;
+  var thisMonth = Utilities.formatDate(new Date(), tz, 'yyyy-MM');
+  var asked = String(month == null ? '' : month);
+  var want = (/^\d{4}-(0[1-9]|1[0-2])$/.test(asked) || asked === 'undated') ? asked : thisMonth;
+
+  var sheet = null, n = 0, light = [], undoneCol = [];
+  try {
+    sheet = ensureLogSheet();
+    n = Math.max(sheet.getLastRow() - 1, 0);
+    if (n > 0) {
+      light = sheet.getRange(2, 1, n, 6).getValues();                     // Id..Summary
+      undoneCol = sheet.getRange(2, LOG_HEADERS.length, n, 1).getValues(); // Undone
     }
-    e.canUndo = !blocked;
+  } catch (e) { n = 0; }
+
+  var seen = {}, counts = {}, picked = []; // picked: sheet-row indexes in `want`, newest first
+  var entries = {};
+  for (var r = n - 1; r >= 0; r--) { // newest first (rows are appended)
+    var v = light[r];
+    var action = String(v[3] || '');
+    if (!toNumber(v[0]) && !action) continue; // skip a blank row
+    var time = v[1] instanceof Date ? Utilities.formatDate(v[1], tz, 'yyyy-MM-dd HH:mm') : String(v[1] || '');
+    var mm = /^(\d{4}-\d{2})/.exec(time);
+    var key = mm ? mm[1] : 'undated';
+    var target = String(v[4] || '');
+    var undone = toBool(undoneCol[r][0]);
+    var blocked = undone || action === 'undo' || action === 'transfer' || action === 'autoArchive' ||
+      seen.hasOwnProperty('t:' + target);
+    seen['t:' + target] = true;
+    counts[key] = (counts[key] || 0) + 1;
+    if (key === want) {
+      picked.push(r);
+      entries[r] = {
+        id: toNumber(v[0]), time: time, device: String(v[2] == null ? '' : v[2]),
+        action: action, target: target, summary: String(v[5] || ''),
+        before: null, after: null, undone: undone, canUndo: !blocked
+      };
+    }
   }
-  return entries.slice(0, limit || 15);
+
+  if (picked.length) { // full snapshots so the app can show exactly what was recorded
+    var lo = picked[picked.length - 1], hi = picked[0];
+    var heavy = sheet.getRange(2 + lo, 7, hi - lo + 1, 2).getValues();    // Before, After
+    for (var p = 0; p < picked.length; p++) {
+      var row = heavy[picked[p] - lo];
+      entries[picked[p]].before = parseJsonSafe(row[0]);
+      entries[picked[p]].after = parseJsonSafe(row[1]);
+    }
+  }
+  var log = [];
+  for (var q = 0; q < picked.length; q++) log.push(entries[picked[q]]);
+
+  // This month is always offered (even when empty), and so is the month shown.
+  if (!counts.hasOwnProperty(thisMonth)) counts[thisMonth] = 0;
+  if (!counts.hasOwnProperty(want)) counts[want] = 0;
+  var months = [];
+  for (var k in counts) if (counts.hasOwnProperty(k)) months.push({ month: k, count: counts[k] });
+  months.sort(function (a, b) { // newest first, 'undated' last
+    if (a.month === b.month) return 0;
+    if (a.month === 'undated') return 1;
+    if (b.month === 'undated') return -1;
+    return a.month < b.month ? 1 : -1;
+  });
+  return { log: log, logMonth: want, logMonths: months };
 }
 
 /** Revert one logged change using its stored Before/After images. */
