@@ -128,7 +128,7 @@ requests that Apps Script can answer without a preflight.
 | `index.html` | The frontend — the one page that's hosted (styles, helpers, and the compiled app) |
 | `src/app.jsx` | The app's screens in JSX: the source of the compiled block in `index.html` |
 | `tools/build.js`, `package.json` | `npm run build` compiles `src/app.jsx` into `index.html`; `npm run check` verifies they match |
-| `.github/workflows/app-build.yml` | Runs `npm run check` on every push and pull request |
+| `.github/workflows/app-build.yml` | Runs `npm run check` on pull requests and on pushes to `main` |
 | `manifest.webmanifest`, `sw.js`, `icons/` | PWA bits: install metadata, network-first service worker, app icons |
 | `Code.gs` | Apps Script backend — paste into the sheet's script editor |
 | `SETUP.md` | One-time deployment guide (sheet → script → Pages) |
@@ -179,8 +179,10 @@ The screens (everything React draws) are written in JSX in `src/app.jsx`.
 Styles, the number/date helpers (`FDMath`), cookies (`FDPrefs`), the demo
 data and `APPS_SCRIPT_URL` are in `index.html` itself, outside the generated
 block, and are edited there directly. Never edit the generated block by hand:
-the next build replaces it. A GitHub check (`npm run check`) fails any push or
-pull request whose `index.html` doesn't match `src/app.jsx`.
+the next build replaces it. A GitHub check (`npm run check`) fails any pull
+request, or push to `main`, whose `index.html` doesn't match `src/app.jsx`.
+It flags the problem; it can't stop GitHub Pages publishing `main`, so make
+app changes through a pull request.
 
 The build uses the same compiler and settings the page used to load into
 every phone (Babel 7.26.4, `react` preset), so the compiled code is what each

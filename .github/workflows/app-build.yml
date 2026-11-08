@@ -1,6 +1,6 @@
-# index.html runs a compiled copy of src/app.jsx. This fails a push or pull
-# request whose index.html doesn't match src/app.jsx — e.g. the JSX was edited
-# but `npm run build` wasn't run, or the compiled block was edited by hand.
+# index.html runs a compiled copy of src/app.jsx. This fails a pull request, or
+# a push to main, whose index.html doesn't match src/app.jsx — e.g. the JSX was
+# edited but `npm run build` wasn't run, or the compiled block was edited by hand.
 name: App build is up to date
 
 on:
