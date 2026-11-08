@@ -75,6 +75,7 @@ function doGet() {
 }
 
 function doPost(e) {
+  REQ_ = null; // fresh per-request handles
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) {
     return jsonOut({ ok: false, error: 'busy: another request is writing — try again' });
@@ -87,7 +88,8 @@ function doPost(e) {
       return jsonOut({ ok: false, error: 'bad request: body must be JSON' });
     }
 
-    var stored = PropertiesService.getScriptProperties().getProperty('FAMILY_PASSWORD');
+    var props = PropertiesService.getScriptProperties().getProperties(); // one read for every key
+    var stored = props.FAMILY_PASSWORD;
     if (!stored) {
       return jsonOut({ ok: false, error: 'setup incomplete: FAMILY_PASSWORD script property is not set' });
     }
@@ -136,13 +138,15 @@ function doPost(e) {
     // this, the read in the same request can still see pre-change data
     // (classic Apps Script behaviour, most visible after deleteRow).
     SpreadsheetApp.flush();
+    // Read the state back ONCE; the log view reuses it to judge Undo.
+    var fdsNow = readFds(), accountsNow = readAccounts();
     // The change log for the month the History page is showing (req.logMonth,
     // 'YYYY-MM'; default: this month) — every entry of it, no cap.
-    var logView = readLogView(req.logMonth);
+    var logView = readLogView(req.logMonth, fdsNow, accountsNow);
     return jsonOut({
-      ok: true, fds: readFds(), accounts: readAccounts(),
+      ok: true, fds: fdsNow, accounts: accountsNow,
       log: logView.log, logMonth: logView.logMonth, logMonths: logView.logMonths,
-      vapidPublic: PropertiesService.getScriptProperties().getProperty('VAPID_PUBLIC') || '',
+      vapidPublic: props.VAPID_PUBLIC || '',
       pushSubs: readSubsPublic()
     });
   } catch (err) {
@@ -160,8 +164,36 @@ function jsonOut(payload) {
 
 // ---------------------------------------------------------------- sheet I/O
 
+// Every getActiveSpreadsheet / getSheetByName / getSpreadsheetTimeZone call and
+// every header-row read is a round trip to the Sheets service, and one request
+// used to repeat the same ones many times. They are remembered for the rest of
+// the request (handles and header rows don't change mid-request); sheet VALUES
+// are never cached, so a read after a write always sees the write. doPost
+// clears this at the start, and every execution starts with fresh globals.
+var REQ_ = null;
+function req_() {
+  if (!REQ_) REQ_ = { ss: null, tz: null, sheets: {}, maps: [] };
+  return REQ_;
+}
+function ss_() {
+  var r = req_();
+  if (!r.ss) r.ss = SpreadsheetApp.getActiveSpreadsheet();
+  return r.ss;
+}
+function tz_() {
+  var r = req_();
+  if (r.tz === null) r.tz = ss_().getSpreadsheetTimeZone();
+  return r.tz;
+}
+/** Sheet by name (remembered once found), or null. */
+function sheetByName_(name) {
+  var r = req_();
+  if (!r.sheets['s:' + name]) r.sheets['s:' + name] = ss_().getSheetByName(name);
+  return r.sheets['s:' + name];
+}
+
 function getSheet(name) {
-  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
+  var sh = sheetByName_(name);
   if (!sh) throw new Error("sheet '" + name + "' not found — check the tab name");
   return sh;
 }
@@ -170,11 +202,8 @@ function normalizeHeader(h) {
   return String(h == null ? '' : h).trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-/** Map canonical field -> 0-based column index, by reading the header row. */
-function headerMap(sheet) {
-  var lastCol = sheet.getLastColumn();
-  if (lastCol < 1) throw new Error("sheet '" + sheet.getName() + "' has no header row");
-  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+/** Map canonical field -> 0-based column index, from a header row's values. */
+function headerMapFromRow(headers) {
   var map = {};
   for (var i = 0; i < headers.length; i++) {
     var field = HEADER_ALIASES[normalizeHeader(headers[i])];
@@ -182,11 +211,31 @@ function headerMap(sheet) {
   }
   return map;
 }
+function rememberMap_(sheet, map) { req_().maps.push({ sheet: sheet, map: map }); return map; }
+
+/** Map canonical field -> 0-based column index, by reading the header row
+ *  (at most once per sheet per request). */
+function headerMap(sheet) {
+  var maps = req_().maps;
+  for (var k = 0; k < maps.length; k++) if (maps[k].sheet === sheet) return maps[k].map;
+  var lastCol = sheet.getLastColumn();
+  if (lastCol < 1) throw new Error("sheet '" + sheet.getName() + "' has no header row");
+  return rememberMap_(sheet, headerMapFromRow(sheet.getRange(1, 1, 1, lastCol).getValues()[0]));
+}
+
+/** Header + every row of a sheet in ONE read (was 4-5 separate calls). */
+function readTable_(sheet, name) {
+  var all = sheet.getDataRange().getValues();
+  if (!all.length || (all.length === 1 && all[0].length === 1 && all[0][0] === '')) {
+    throw new Error("sheet '" + name + "' has no header row");
+  }
+  return { map: rememberMap_(sheet, headerMapFromRow(all[0])), rows: all.slice(1) };
+}
 
 function toIsoDate(v) {
   if (v === null || v === undefined || v === '') return '';
   if (v instanceof Date) {
-    var tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+    var tz = tz_();
     return Utilities.formatDate(v, tz, 'yyyy-MM-dd');
   }
   return String(v).trim();
@@ -225,10 +274,10 @@ function coerceField(field, v) {
 
 function readFds() {
   var sheet = getSheet(FD_SHEET);
-  var map = headerMap(sheet);
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  var values = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+  var t = readTable_(sheet, FD_SHEET);
+  var map = t.map;
+  if (!t.rows.length) return [];
+  var values = t.rows;
   var fds = [];
   var maxId = 0;
   var r, fd, i, field;
@@ -264,10 +313,10 @@ function readFds() {
 
 function readAccounts() {
   var sheet = getSheet(ACCOUNTS_SHEET);
-  var map = headerMap(sheet);
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  var values = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+  var t = readTable_(sheet, ACCOUNTS_SHEET);
+  var map = t.map;
+  if (!t.rows.length) return [];
+  var values = t.rows;
   var out = [];
   for (var r = 0; r < values.length; r++) {
     var acc = {};
@@ -620,11 +669,11 @@ function rawAccountDelete(name) {
 // ---------------------------------------------------------------- change log
 
 function ensureLogSheet() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(LOG_SHEET);
+  var sheet = sheetByName_(LOG_SHEET);
   if (!sheet) {
-    sheet = ss.insertSheet(LOG_SHEET);
+    sheet = ss_().insertSheet(LOG_SHEET);
     sheet.getRange(1, 1, 1, LOG_HEADERS.length).setValues([LOG_HEADERS]);
+    req_().sheets['s:' + LOG_SHEET] = sheet;
   }
   return sheet;
 }
@@ -656,7 +705,7 @@ function appendLog(action, target, summary, before, after) {
     var sheet = ensureLogSheet();
     var lastRow = sheet.getLastRow();
     var id = lastRow >= 2 ? toNumber(sheet.getRange(lastRow, 1).getValue()) + 1 : 1;
-    var tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+    var tz = tz_();
     var time = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm');
     sheet.getRange(lastRow + 1, 2).setNumberFormat('@'); // keep Time as plain text
     sheet.getRange(lastRow + 1, 1, 1, LOG_HEADERS.length).setValues([[
@@ -673,6 +722,48 @@ function parseJsonSafe(s) {
   try { return JSON.parse(String(s)); } catch (e) { return null; }
 }
 
+function indexFds_(fds) {
+  var m = {};
+  for (var i = 0; i < (fds || []).length; i++) m['k' + toNumber(fds[i].id)] = fds[i];
+  return m;
+}
+function indexAccounts_(accounts) {
+  var m = {};
+  for (var i = 0; i < (accounts || []).length; i++) m['k' + String(accounts[i].name || '').trim().toLowerCase()] = accounts[i];
+  return m;
+}
+/** Same FD on every logged field, compared through the sheet's own coercion. */
+function sameFd_(cur, snap) {
+  for (var i = 0; i < FD_FIELDS.length; i++) {
+    var f = FD_FIELDS[i];
+    if (JSON.stringify(coerceField(f, cur[f])) !== JSON.stringify(coerceField(f, snap[f]))) return false;
+  }
+  return true;
+}
+/** True when the item a logged change touched no longer looks the way that
+ *  change left it: it was moved by a transfer, renamed along with its
+ *  account, or edited straight in the sheet — none of which writes an 'fd:N'
+ *  Log row, so the newer-entry rule can't see them. Undoing such an entry
+ *  would replay an old snapshot over those newer changes. */
+function undoDrifted_(action, after, fdById, accountByName) {
+  if (!after) return false;
+  if (action === 'create' || action === 'update') {
+    var cur = fdById['k' + toNumber(after.id)];
+    return !cur || !sameFd_(cur, after);
+  }
+  if (action === 'markDone') { // its undo only rewrites these two cells
+    var c2 = fdById['k' + toNumber(after.id)];
+    return !c2 || coerceField('status', c2.status) !== coerceField('status', after.status) ||
+      toBool(c2.showInDashboard) !== toBool(after.showInDashboard);
+  }
+  if (action === 'accountCreate' || action === 'accountUpdate') {
+    var a = accountByName['k' + String(after.name || '').trim().toLowerCase()];
+    return !a || String(a.person || '').trim() !== String(after.person || '').trim() ||
+      String(a.bank || '').trim() !== String(after.bank || '').trim();
+  }
+  return false; // delete/accountDelete are guarded by "exists again"; the rest aren't undoable
+}
+
 /** One calendar month of the change log, newest first, with NO row cap — plus
  *  every month that has entries (with counts) so the History page can switch
  *  between them. `month` is 'YYYY-MM', or 'undated' for rows whose Time can't
@@ -682,14 +773,15 @@ function parseJsonSafe(s) {
  *  canUndo is computed over the WHOLE log, not just the month shown: an entry
  *  is undoable only while no newer entry (in any month) touches the same
  *  target, it is not itself an undo or a transfer (transfers are reversed by
- *  another transfer) or a legacy auto-archive, and it has not been undone —
- *  the same rule undoLog enforces.
+ *  another transfer) or a legacy auto-archive, and it has not been undone.
+ *  When the current `fds`/`accounts` are passed, it must ALSO still look the
+ *  way that change left it (undoDrifted_) — the same rules undoLog enforces.
  *
  *  Cost stays flat as the log grows: the light columns (Id..Summary, Undone)
  *  are read for every row, but the heavy Before/After JSON only for the rows
  *  of the month being returned. */
-function readLogView(month) {
-  var tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+function readLogView(month, fds, accounts) {
+  var tz = tz_();
   var thisMonth = Utilities.formatDate(new Date(), tz, 'yyyy-MM');
   var asked = String(month == null ? '' : month);
   var want = (/^\d{4}-(0[1-9]|1[0-2])$/.test(asked) || asked === 'undated') ? asked : thisMonth;
@@ -711,7 +803,7 @@ function readLogView(month) {
     var action = String(v[3] || '');
     if (!toNumber(v[0]) && !action) continue; // skip a blank row
     var time = v[1] instanceof Date ? Utilities.formatDate(v[1], tz, 'yyyy-MM-dd HH:mm') : String(v[1] || '');
-    var mm = /^(\d{4}-\d{2})/.exec(time);
+    var mm = /^(\d{4}-(0[1-9]|1[0-2]))/.exec(time); // only real months; e.g. '2026-13' is undated
     var key = mm ? mm[1] : 'undated';
     var target = String(v[4] || '');
     var undone = toBool(undoneCol[r][0]);
@@ -736,6 +828,13 @@ function readLogView(month) {
       var row = heavy[picked[p] - lo];
       entries[picked[p]].before = parseJsonSafe(row[0]);
       entries[picked[p]].after = parseJsonSafe(row[1]);
+    }
+    if (fds || accounts) { // hide Undo where the item has changed since (see undoDrifted_)
+      var fdById = indexFds_(fds), accountByName = indexAccounts_(accounts);
+      for (var d = 0; d < picked.length; d++) {
+        var en = entries[picked[d]];
+        if (en.canUndo && undoDrifted_(en.action, en.after, fdById, accountByName)) en.canUndo = false;
+      }
     }
   }
   var log = [];
@@ -783,6 +882,14 @@ function undoLog(logId) {
     after = values[idx][7] ? JSON.parse(String(values[idx][7])) : null;
   } catch (e) {
     throw new Error('log entry is unreadable');
+  }
+  // Refuse when the item no longer looks the way this change left it (moved,
+  // renamed, or edited in the sheet since): replaying the old snapshot would
+  // silently overwrite those newer changes.
+  if (undoDrifted_(action, after, indexFds_(readFds()), indexAccounts_(readAccounts()))) {
+    throw new Error(/^account/.test(action)
+      ? "This account has been changed since, so this older change can't be undone safely. Edit the account instead."
+      : "This FD has been changed since (moved, renamed or edited in the sheet), so this older change can't be undone safely. Edit the FD instead.");
   }
 
   if (action === 'create') {
@@ -1112,13 +1219,12 @@ function readSubs() {
 /** Subscriptions for display in the app (no push keys). Never creates the
  *  sheet, so unrelated logins don't spawn an empty PushSubs tab. */
 function readSubsPublic() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(PUSH_SHEET);
+  var sheet = sheetByName_(PUSH_SHEET);
   if (!sheet) return [];
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  var tz = ss.getSpreadsheetTimeZone();
-  var v = sheet.getRange(2, 1, lastRow - 1, PUSH_HEADERS.length).getValues();
+  var all = sheet.getDataRange().getValues(); // one read
+  if (all.length < 2) return [];
+  var tz = tz_();
+  var v = all.slice(1);
   var out = [];
   for (var r = 0; r < v.length; r++) {
     if (!v[r][0]) continue;

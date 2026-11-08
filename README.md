@@ -34,6 +34,14 @@ added.
   (parents sign in once); a **Sign out** button forgets it. Changing
   `FAMILY_PASSWORD` in Apps Script signs every device out at once.
 - **Light & dark mode** — follows the device by default, with a toggle.
+- **Clear save feedback** — saves stay honest (nothing changes on screen until
+  the sheet has accepted it), so while one runs a bar across the top and a
+  **Saving…** pill show it's working; then a toast confirms exactly what was
+  saved ("Saved — changes to FD #12") and the changed row glows for a few
+  seconds so it's easy to spot.
+- **Fewer, faster round trips** — each request reads every sheet tab in one
+  go, and switching tabs re-pulls the sheet only when what's on screen is over
+  a minute old (every save already brings back the fresh sheet).
 - **Change log + Undo** — every add/edit/delete shows up under a **History**
   tab (with the device name that did it), **one month at a time with no
   limit**: it opens on this month, and a month dropdown (with how many changes
@@ -41,7 +49,10 @@ added.
   Tap an entry to reopen the FD or account in a read-only form showing exactly
   what was recorded, and the latest change to any item can be undone — a
   deleted FD comes back with the same ID, an edit reverts to its previous
-  values.
+  values. Undo is only offered while the item still looks the way that change
+  left it: if it was since moved to another account, renamed with its
+  account, or edited straight in the sheet, Undo is hidden (and refused) so an
+  old snapshot can never overwrite newer details.
 - **Maturity reminders (push)** — optional phone notifications 2 days before,
   1 day before, and on the maturity date (~10 AM IST), delivered to the
   installed PWA via Web Push from a daily Apps Script trigger. The push is
@@ -97,8 +108,11 @@ requests that Apps Script can answer without a preflight.
   with a JSON *before/after image* of the affected row — those images are
   what make Undo trustworthy. **Don't edit this tab by hand.** An entry is
   undoable only while it is the latest change to that FD/account across the
-  *whole* log, not just the month on screen (so an undo can never silently
-  clobber a newer edit); undo entries themselves can't be undone.
+  *whole* log, not just the month on screen, **and** the item still matches
+  what that change left behind (transfers, account renames and hand edits in
+  the sheet don't write an FD row of their own, so this second check is what
+  catches them) — an undo can never silently clobber newer data; undo entries
+  themselves can't be undone.
 
 ## Repo map
 
